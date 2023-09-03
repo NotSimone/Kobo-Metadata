@@ -15,8 +15,8 @@ from calibre.utils.logging import Log
 
 class KoboMetadata(Source):
     name = "Kobo Metadata"
-    author = "Simon"
-    version = (1, 0, 1)
+    author = "Simon Hua"
+    version = (1, 1, 0)
     minimum_calibre_version = (2, 82, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -94,6 +94,17 @@ class KoboMetadata(Source):
             choices=COUNTRIES,
         ),
         Option(
+            "num_matches",
+            "number",
+            1,
+            _("Number of matches to fetch"),
+            _(
+                "How many possible matches to fetch metadata for. If applying metadata in bulk, "
+                "there is no use setting this above 1. Otherwise, set this higher if you are "
+                "having trouble matching a specific book."
+            ),
+        ),
+        Option(
             "title_blacklist",
             "string",
             "",
@@ -160,6 +171,7 @@ class KoboMetadata(Source):
             log.info(f"KoboMetadata::identify: Searching with query: {query}")
             urls = self._perform_query(query, log, timeout)
 
+        index = 0
         for url in urls:
             log.info(f"KoboMetadata::identify: Looking up metadata with url: {url}")
             try:
@@ -171,11 +183,15 @@ class KoboMetadata(Source):
                 return f"KoboMetadata::identify: Got exception looking up metadata"
 
             if metadata:
-                metadata.source_relevance = 0
+                metadata.source_relevance = index
                 result_queue.put(metadata)
+            else:
+                log.info(f"KoboMetadata::identify:: Could not find matching book")
+
+            index += 1
+            if index >= self.prefs["num_matches"]:
                 return None
 
-        log.info(f"KoboMetadata::identify:: Could not find matching book")
         return None
 
     def download_cover(
