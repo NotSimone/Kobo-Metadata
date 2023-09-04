@@ -9,6 +9,7 @@ from calibre import browser
 from calibre.ebooks.metadata import check_isbn
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.sources.base import Option, Source, fixauthors
+from calibre.utils.config_base import tweaks
 from calibre.utils.date import parse_only_date
 from calibre.utils.logging import Log
 
@@ -16,7 +17,7 @@ from calibre.utils.logging import Log
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "Simon Hua"
-    version = (1, 1, 0)
+    version = (1, 1, 1)
     minimum_calibre_version = (2, 82, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -352,8 +353,10 @@ class KoboMetadata(Source):
         cover_elements = tree.xpath("//img[contains(@class, 'cover-image')]")
         if cover_elements:
             cover_url = "https:" + cover_elements[0].get("src")
-            # Change the resolution from 353x569 to 1650x2200
-            cover_url = cover_url.replace("353/569/90", "1650/2200/90")
+            # Change the resolution from 353x569 to maximum_cover_size (default 1650x2200)
+            # Kobo will resize to match the width and have the correct aaspect ratio
+            width, height = tweaks["maximum_cover_size"]
+            cover_url = cover_url.replace("353/569/90", f"{width}/{height}/90")
             self.cache_identifier_to_cover_url(metadata.isbn, cover_url)
             log.info(f"KoboMetadata::_lookup_metadata: Got cover: {cover_url}")
 
