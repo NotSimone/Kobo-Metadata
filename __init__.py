@@ -17,7 +17,7 @@ from calibre.utils.logging import Log
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "Simon Hua"
-    version = (1, 1, 1)
+    version = (1, 1, 2)
     minimum_calibre_version = (2, 82, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -217,7 +217,7 @@ class KoboMetadata(Source):
                 log.error("KoboMetadata::download_cover: Could not identify book")
                 return
 
-            metadata = res_queue.front()
+            metadata = res_queue.get()
             cover_url = self.get_cached_cover_url(metadata)
         if not cover_url:
             log.error("KoboMetadata::download_cover: Could not find cover")
