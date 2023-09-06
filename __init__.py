@@ -17,7 +17,7 @@ from calibre.utils.logging import Log
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "Simon Hua"
-    version = (1, 1, 2)
+    version = (1, 2, 0)
     minimum_calibre_version = (2, 82, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -125,6 +125,13 @@ class KoboMetadata(Source):
             False,
             _("Remove leading zeroes"),
             _("Remove leading zeroes from numbers in the title"),
+        ),
+        Option(
+            "resize_cover",
+            "bool",
+            False,
+            _("Resize cover"),
+            _("Resize the cover to the maximum_cover_size tweak setting"),
         ),
     )
 
@@ -352,11 +359,17 @@ class KoboMetadata(Source):
 
         cover_elements = tree.xpath("//img[contains(@class, 'cover-image')]")
         if cover_elements:
+            # Sample: https://cdn.kobo.com/book-images/44f0e8b9-3338-4d1c-bd6e-e88e82cb8fad/353/569/90/False/holly-23.jpg
             cover_url = "https:" + cover_elements[0].get("src")
-            # Change the resolution from 353x569 to maximum_cover_size (default 1650x2200)
-            # Kobo will resize to match the width and have the correct aaspect ratio
-            width, height = tweaks["maximum_cover_size"]
-            cover_url = cover_url.replace("353/569/90", f"{width}/{height}/90")
+            if self.prefs["resize_cover"]:
+                # Change the resolution from 353x569 to maximum_cover_size (default 1650x2200)
+                # Kobo will resize to match the width and have the correct aaspect ratio
+                width, height = tweaks["maximum_cover_size"]
+                cover_url = cover_url.replace("353/569/90", f"{width}/{height}/90")
+            else:
+                # Removing this gets the original cover art (probably)
+                # Sample: https://cdn.kobo.com/book-images/44f0e8b9-3338-4d1c-bd6e-e88e82cb8fad/holly-23.jpg
+                cover_url = cover_url.replace("353/569/90/False/", "")
             self.cache_identifier_to_cover_url(metadata.isbn, cover_url)
             log.info(f"KoboMetadata::_lookup_metadata: Got cover: {cover_url}")
 
