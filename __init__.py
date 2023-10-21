@@ -16,8 +16,8 @@ from calibre.utils.logging import Log
 
 class KoboMetadata(Source):
     name = "Kobo Metadata"
-    author = "Simon Hua"
-    version = (1, 2, 0)
+    author = "NotSimone"
+    version = (1, 2, 1)
     minimum_calibre_version = (2, 82, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -365,7 +365,7 @@ class KoboMetadata(Source):
                 # Change the resolution from 353x569 to maximum_cover_size (default 1650x2200)
                 # Kobo will resize to match the width and have the correct aaspect ratio
                 width, height = tweaks["maximum_cover_size"]
-                cover_url = cover_url.replace("353/569/90", f"{width}/{height}/90")
+                cover_url = cover_url.replace("353/569/90", f"{width}/{height}/100")
             else:
                 # Removing this gets the original cover art (probably)
                 # Sample: https://cdn.kobo.com/book-images/44f0e8b9-3338-4d1c-bd6e-e88e82cb8fad/holly-23.jpg
