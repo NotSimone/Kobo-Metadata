@@ -17,7 +17,7 @@ from calibre.utils.logging import Log
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "NotSimone"
-    version = (1, 2, 1)
+    version = (1, 3, 0)
     minimum_calibre_version = (2, 82, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -163,9 +163,7 @@ class KoboMetadata(Source):
         identifiers={},
         timeout=30,
     ):
-        log.info(
-            f"KoboMetadata::identify: title: {title}, authors: {authors}, identifiers: {identifiers}"
-        )
+        log.info(f"KoboMetadata::identify: title: {title}, authors: {authors}, identifiers: {identifiers}")
 
         isbn = check_isbn(identifiers.get("isbn", None))
         urls = []
@@ -173,11 +171,11 @@ class KoboMetadata(Source):
         if isbn:
             log.info(f"KoboMetadata::identify: Getting metadata with isbn: {isbn}")
             # isbn searches will redirect to the product page
-            urls = [self._get_search_url(isbn)]
-        else:
-            query = self._generate_query(title, authors)
-            log.info(f"KoboMetadata::identify: Searching with query: {query}")
-            urls = self._perform_query(query, log, timeout)
+            urls.append(self._get_search_url(isbn))
+
+        query = self._generate_query(title, authors)
+        log.info(f"KoboMetadata::identify: Searching with query: {query}")
+        urls.extend(self._perform_query(query, log, timeout))
 
         index = 0
         for url in urls:
@@ -185,9 +183,7 @@ class KoboMetadata(Source):
             try:
                 metadata = self._lookup_metadata(url, log, timeout)
             except Exception as e:
-                log.error(
-                    f"KoboMetadata::identify: Got exception looking up metadata: {e}"
-                )
+                log.error(f"KoboMetadata::identify: Got exception looking up metadata: {e}")
                 return f"KoboMetadata::identify: Got exception looking up metadata"
 
             if metadata:
@@ -215,9 +211,7 @@ class KoboMetadata(Source):
     ):
         cover_url = self.get_cached_cover_url(identifiers)
         if not cover_url:
-            log.info(
-                "KoboMetadata::download_cover: No cached url found, running identify"
-            )
+            log.info("KoboMetadata::download_cover: No cached url found, running identify")
             res_queue = Queue()
             self.identify(log, res_queue, abort, title, authors, identifiers, timeout)
             if res_queue.empty():
@@ -233,9 +227,7 @@ class KoboMetadata(Source):
         try:
             cover = br.open_novisit(cover_url, timeout=timeout).read()
         except Exception as e:
-            log.error(
-                f"KoboMetadata::download_cover: Got exception while opening cover url: {e}"
-            )
+            log.error(f"KoboMetadata::download_cover: Got exception while opening cover url: {e}")
             return
 
         result_queue.put((self, cover))
@@ -244,7 +236,7 @@ class KoboMetadata(Source):
         return f"{self.BASE_URL}{self.prefs['country']}/en/"
 
     def _get_search_url(self, search_str: str) -> str:
-        query = {"query": search_str}
+        query = {"query": search_str, "fcmedia": "Book"}
         return f"{self._get_base_url()}search?{urlencode(query)}"
 
     def _generate_query(self, title: str, authors: list[str]) -> str:
@@ -252,15 +244,13 @@ class KoboMetadata(Source):
         # Kobo search doesn't do a great job of matching numbers
         title = " ".join(
             x.lstrip("0") if self.prefs["remove_leading_zeroes"] else x
-            for x in self.get_title_tokens(
-                title, strip_joiners=False, strip_subtitle=False
-            )
+            for x in self.get_title_tokens(title, strip_joiners=False, strip_subtitle=False)
         )
 
-        if authors is not None:
-            return title + " " + " ".join(self.get_author_tokens(authors))
-        else:
-            return title
+        if authors:
+            title += " " + " ".join(self.get_author_tokens(authors))
+
+        return title
 
     def _get_browser(self) -> browser:
         br: browser = self.browser
@@ -279,9 +269,7 @@ class KoboMetadata(Source):
         try:
             raw = br.open_novisit(url, timeout=timeout).read()
         except Exception as e:
-            log.error(
-                f"KoboMetadata::_perform_query: Got exception while opening url: {e}"
-            )
+            log.error(f"KoboMetadata::_perform_query: Got exception while opening url: {e}")
             return None
         tree = html.fromstring(raw)
 
@@ -306,45 +294,32 @@ class KoboMetadata(Source):
 
         metadata = Metadata(title, authors)
 
-        series_elements = tree.xpath("//span[@class='series product-field']/span")
-        if len(series_elements) == 2:
-            match = re.match("Book (\d*).*", series_elements[0].text)
-            metadata.series_index = match.groups(0)[0]
-            metadata.series = series_elements[1].xpath("a")[0].text
-            log.info(f"KoboMetadata::_lookup_metadata: Got series: {metadata.series}")
-            log.info(
-                f"KoboMetadata::_lookup_metadata: Got series_index: {metadata.series_index}"
-            )
+        series_elements = tree.xpath("//span[@class='series product-field']")
+        if series_elements:
+            metadata.series = series_elements[0].xpath("span[@class='product-sequence-field']/a")[0].text
+            series_index = series_elements[0].xpath("span[@class='sequenced-name-prefix']")
+            metadata.series_index = re.match("Book (.*) - ", series_index[0].text).groups(0)[0]
 
-        book_details_elements = tree.xpath(
-            "//div[@class='bookitem-secondary-metadata']/ul/li"
-        )
+            log.info(f"KoboMetadata::_lookup_metadata: Got series: {metadata.series}")
+            log.info(f"KoboMetadata::_lookup_metadata: Got series_index: {metadata.series_index}")
+
+        book_details_elements = tree.xpath("//div[@class='bookitem-secondary-metadata']/ul/li")
         if book_details_elements:
             metadata.publisher = book_details_elements[0].text.strip()
-            log.info(
-                f"KoboMetadata::_lookup_metadata: Got publisher: {metadata.publisher}"
-            )
+            log.info(f"KoboMetadata::_lookup_metadata: Got publisher: {metadata.publisher}")
             for x in book_details_elements[1:]:
                 descriptor = x.text.strip()
                 if descriptor == "Release Date:":
                     metadata.pubdate = parse_only_date(x.xpath("span")[0].text)
-                    log.info(
-                        f"KoboMetadata::_lookup_metadata: Got pubdate: {metadata.pubdate}"
-                    )
+                    log.info(f"KoboMetadata::_lookup_metadata: Got pubdate: {metadata.pubdate}")
                 elif descriptor == "ISBN:":
                     metadata.isbn = x.xpath("span")[0].text
-                    log.info(
-                        f"KoboMetadata::_lookup_metadata: Got isbn: {metadata.isbn}"
-                    )
+                    log.info(f"KoboMetadata::_lookup_metadata: Got isbn: {metadata.isbn}")
                 elif descriptor == "Language:":
                     metadata.language = x.xpath("span")[0].text
-                    log.info(
-                        f"KoboMetadata::_lookup_metadata: Got language: {metadata.language}"
-                    )
+                    log.info(f"KoboMetadata::_lookup_metadata: Got language: {metadata.language}")
 
-        tags_elements = tree.xpath(
-            "//ul[@class='category-rankings']/meta[@property='genre']"
-        )
+        tags_elements = tree.xpath("//ul[@class='category-rankings']/meta[@property='genre']")
         if tags_elements:
             # Calibre doesnt like commas in tags
             metadata.tags = {x.get("content").replace(", ", " ") for x in tags_elements}
@@ -353,9 +328,7 @@ class KoboMetadata(Source):
         synopsis_elements = tree.xpath("//div[@class='synopsis-description']")
         if synopsis_elements:
             metadata.comments = html.tostring(synopsis_elements[0], method="html")
-            log.info(
-                f"KoboMetadata::_lookup_metadata: Got comments: {metadata.comments}"
-            )
+            log.info(f"KoboMetadata::_lookup_metadata: Got comments: {metadata.comments}")
 
         cover_elements = tree.xpath("//img[contains(@class, 'cover-image')]")
         if cover_elements:
@@ -375,38 +348,32 @@ class KoboMetadata(Source):
 
         blacklisted_title = self._check_title_blacklist(title, log)
         if blacklisted_title:
-            log.info(
-                f"KoboMetadata::_lookup_metadata: Hit blacklisted word(s) in the title: {blacklisted_title}"
-            )
+            log.info(f"KoboMetadata::_lookup_metadata: Hit blacklisted word(s) in the title: {blacklisted_title}")
             return None
 
         blacklisted_tags = self._check_tag_blacklist(metadata.tags, log)
         if blacklisted_tags:
-            log.info(
-                f"KoboMetadata::_lookup_metadata: Hit blacklisted tag(s): {blacklisted_tags}"
-            )
+            log.info(f"KoboMetadata::_lookup_metadata: Hit blacklisted tag(s): {blacklisted_tags}")
             return None
 
         return metadata
 
     # Returns the set of words in the title that are also blacklisted
     def _check_title_blacklist(self, title: str, log: Log) -> set:
-        blacklisted_words = {
-            x.strip().lower() for x in self.prefs["title_blacklist"].split(",")
-        }
-        log.info(
-            f"KoboMetadata::_check_title_blacklist: blacklisted title words: {blacklisted_words}"
-        )
+        if not self.prefs["title_blacklist"]:
+            return None
+
+        blacklisted_words = {x.strip().lower() for x in self.prefs["title_blacklist"].split(",")}
+        log.info(f"KoboMetadata::_check_title_blacklist: blacklisted title words: {blacklisted_words}")
         # Remove punctuation from title string
         title_str = title.translate(str.maketrans("", "", string.punctuation))
         return blacklisted_words.intersection(title_str.lower().split(" "))
 
     # Returns the set of tags that are also blacklisted
     def _check_tag_blacklist(self, tags: set[str], log: Log) -> set:
-        blacklisted_tags = {
-            x.strip().lower() for x in self.prefs["tag_blacklist"].split(",")
-        }
-        log.info(
-            f"KoboMetadata::_check_tag_blacklist: blacklisted tags: blacklisted_tags"
-        )
+        if not self.prefs["tag_blacklist"]:
+            return None
+
+        blacklisted_tags = {x.strip().lower() for x in self.prefs["tag_blacklist"].split(",")}
+        log.info(f"KoboMetadata::_check_tag_blacklist: blacklisted tags: blacklisted_tags")
         return blacklisted_tags.intersection({x.lower() for x in tags})
