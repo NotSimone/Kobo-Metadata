@@ -17,7 +17,7 @@ from calibre.utils.logging import Log
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "NotSimone"
-    version = (1, 3, 0)
+    version = (1, 3, 1)
     minimum_calibre_version = (2, 82, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -296,12 +296,20 @@ class KoboMetadata(Source):
 
         series_elements = tree.xpath("//span[@class='series product-field']")
         if series_elements:
-            metadata.series = series_elements[0].xpath("span[@class='product-sequence-field']/a")[0].text
-            series_index = series_elements[0].xpath("span[@class='sequenced-name-prefix']")
-            metadata.series_index = re.match("Book (.*) - ", series_index[0].text).groups(0)[0]
+            # Books in series but without an index get a nested series product-field class
+            # With index: https://www.kobo.com/au/en/ebook/fourth-wing-1
+            # Without index: https://www.kobo.com/au/en/ebook/les-damnees-de-la-mer-femmes-et-frontieres-en-mediterranee
+            series_name_element = series_elements[-1].xpath("span[@class='product-sequence-field']/a")
+            if series_name_element:
+                metadata.series = series_name_element[0].text
+                log.info(f"KoboMetadata::_lookup_metadata: Got series: {metadata.series}")
 
-            log.info(f"KoboMetadata::_lookup_metadata: Got series: {metadata.series}")
-            log.info(f"KoboMetadata::_lookup_metadata: Got series_index: {metadata.series_index}")
+            series_index_element = series_elements[-1].xpath("span[@class='sequenced-name-prefix']")
+            if series_index_element:
+                series_index_match = re.match("Book (.*) - ", series_index_element[0].text)
+                if series_index_match:
+                    metadata.series_index = series_index_match.groups(0)[0]
+                    log.info(f"KoboMetadata::_lookup_metadata: Got series_index: {metadata.series_index}")
 
         book_details_elements = tree.xpath("//div[@class='bookitem-secondary-metadata']/ul/li")
         if book_details_elements:
