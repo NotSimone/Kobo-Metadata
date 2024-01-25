@@ -142,7 +142,7 @@ class KoboMetadata(Source):
         isbn = identifiers.get("isbn", None)
         if isbn:
             # Example output:"https://www.kobo.com/au/en/search?query=9781761108105"
-            return ("isbn", isbn, self._get_search_url(isbn))
+            return ("isbn", isbn, self._get_search_url(isbn, 1))
         return None
 
     def get_cached_cover_url(self, identifiers) -> Optional[str]:
@@ -193,10 +193,7 @@ class KoboMetadata(Source):
                 result_queue.put(metadata)
             else:
                 log.info("KoboMetadata::identify:: Could not find matching book")
-
             index += 1
-            if index >= self.prefs["num_matches"]:
-                return
         return
 
     def download_cover(
@@ -233,8 +230,8 @@ class KoboMetadata(Source):
 
         result_queue.put((self, cover))
 
-    def _get_search_url(self, search_str: str) -> str:
-        query = {"query": search_str, "fcmedia": "Book"}
+    def _get_search_url(self, search_str: str, page_number: int) -> str:
+        query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number}
         return f"{self.BASE_URL}{self.prefs['country']}/en/search?{urlencode(query)}"
 
     def _generate_query(self, title: str, authors: list[str]) -> str:
@@ -272,7 +269,7 @@ class KoboMetadata(Source):
 
     # Returns a list of urls that match our search
     def _perform_query(self, query: str, log: Log, timeout: int) -> list[str]:
-        url = self._get_search_url(query)
+        url = self._get_search_url(query, 1)
         log.info(f"KoboMetadata::identify: Searching for book with url: {url}")
 
         tree, is_search = self._get_webpage(url, log, timeout)
@@ -280,12 +277,23 @@ class KoboMetadata(Source):
             log.info(f"KoboMetadata::_lookup_metadata: Could not get url: {url}")
             return []
 
-        # Some queries (esp ISBN) can redirect straight to the product page
-        if is_search:
-            search_results_elements = tree.xpath("//h2[@class='title product-field']/a")
-            return [x.get("href") for x in search_results_elements]
-        else:
+        # Query redirected straight to product page
+        if not is_search:
             return [url]
+
+        search_results_elements = tree.xpath("//h2[@class='title product-field']/a")
+        results = [x.get("href") for x in search_results_elements]
+
+        page_num = 2
+        while len(results) < self.prefs["num_matches"]:
+            url = self._get_search_url(query, page_num)
+            tree, is_search = self._get_webpage(url, log, timeout)
+            assert tree and is_search
+            search_results_elements = tree.xpath("//h2[@class='title product-field']/a")
+            results.extend([x.get("href") for x in search_results_elements])
+            page_num += 1
+
+        return results[: self.prefs["num_matches"]]
 
     # Given the url for a book, parse and return the metadata
     def _lookup_metadata(self, url: str, log: Log, timeout: int) -> Optional[Metadata]:
