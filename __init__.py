@@ -1,9 +1,8 @@
 import re
 import string
 from queue import Queue
+from typing import Optional, Tuple
 from urllib.parse import urlencode
-
-from lxml import html
 
 from calibre import browser
 from calibre.ebooks.metadata import check_isbn
@@ -12,6 +11,7 @@ from calibre.ebooks.metadata.sources.base import Option, Source, fixauthors
 from calibre.utils.config_base import tweaks
 from calibre.utils.date import parse_only_date
 from calibre.utils.logging import Log
+from lxml import html
 
 
 class KoboMetadata(Source):
@@ -138,14 +138,14 @@ class KoboMetadata(Source):
     def __init__(self, *args, **kwargs):
         Source.__init__(self, *args, **kwargs)
 
-    def get_book_url(self, identifiers):
+    def get_book_url(self, identifiers) -> Optional[Tuple]:
         isbn = identifiers.get("isbn", None)
         if isbn:
             # Example output:"https://www.kobo.com/au/en/search?query=9781761108105"
             return ("isbn", isbn, self._get_search_url(isbn))
         return None
 
-    def get_cached_cover_url(self, identifiers):
+    def get_cached_cover_url(self, identifiers) -> Optional[str]:
         isbn = identifiers.get("isbn", None)
 
         if isbn is not None:
@@ -162,7 +162,7 @@ class KoboMetadata(Source):
         authors=None,
         identifiers={},
         timeout=30,
-    ):
+    ) -> None:
         log.info(f"KoboMetadata::identify: title: {title}, authors: {authors}, identifiers: {identifiers}")
 
         isbn = check_isbn(identifiers.get("isbn", None))
@@ -170,8 +170,10 @@ class KoboMetadata(Source):
 
         if isbn:
             log.info(f"KoboMetadata::identify: Getting metadata with isbn: {isbn}")
-            # isbn searches will redirect to the product page
-            urls.append(self._get_search_url(isbn))
+            # isbn searches will (sometimes) redirect to the product page
+            isbn_urls = self._perform_query(isbn, log, timeout)
+            if isbn_urls:
+                urls.append(isbn_urls[0])
 
         query = self._generate_query(title, authors)
         log.info(f"KoboMetadata::identify: Searching with query: {query}")
@@ -184,19 +186,18 @@ class KoboMetadata(Source):
                 metadata = self._lookup_metadata(url, log, timeout)
             except Exception as e:
                 log.error(f"KoboMetadata::identify: Got exception looking up metadata: {e}")
-                return f"KoboMetadata::identify: Got exception looking up metadata"
+                return
 
             if metadata:
                 metadata.source_relevance = index
                 result_queue.put(metadata)
             else:
-                log.info(f"KoboMetadata::identify:: Could not find matching book")
+                log.info("KoboMetadata::identify:: Could not find matching book")
 
             index += 1
             if index >= self.prefs["num_matches"]:
-                return None
-
-        return None
+                return
+        return
 
     def download_cover(
         self,
@@ -208,7 +209,7 @@ class KoboMetadata(Source):
         identifiers={},
         timeout=30,
         get_best_cover=False,
-    ):
+    ) -> None:
         cover_url = self.get_cached_cover_url(identifiers)
         if not cover_url:
             log.info("KoboMetadata::download_cover: No cached url found, running identify")
@@ -232,12 +233,9 @@ class KoboMetadata(Source):
 
         result_queue.put((self, cover))
 
-    def _get_base_url(self) -> str:
-        return f"{self.BASE_URL}{self.prefs['country']}/en/"
-
     def _get_search_url(self, search_str: str) -> str:
         query = {"query": search_str, "fcmedia": "Book"}
-        return f"{self._get_base_url()}search?{urlencode(query)}"
+        return f"{self.BASE_URL}{self.prefs['country']}/en/search?{urlencode(query)}"
 
     def _generate_query(self, title: str, authors: list[str]) -> str:
         # Remove leading zeroes from the title if configured
@@ -260,29 +258,41 @@ class KoboMetadata(Source):
         )
         return br
 
+    # Returns [lxml html element, is search result]
+    def _get_webpage(self, url: str, log: Log, timeout: int) -> Tuple[Optional[html.Element], bool]:
+        br = self._get_browser()
+        try:
+            raw = br.open_novisit(url, timeout=timeout).read()
+            tree = html.fromstring(raw)
+            is_search = len(tree.xpath("//div[@class='search-results-display kobo-gizmo']")) != 0
+            return (tree, is_search)
+        except Exception as e:
+            log.error(f"KoboMetadata::_get_webpage: Got exception while opening url: {e}")
+            return (None, False)
+
     # Returns a list of urls that match our search
     def _perform_query(self, query: str, log: Log, timeout: int) -> list[str]:
         url = self._get_search_url(query)
         log.info(f"KoboMetadata::identify: Searching for book with url: {url}")
 
-        br = self._get_browser()
-        try:
-            raw = br.open_novisit(url, timeout=timeout).read()
-        except Exception as e:
-            log.error(f"KoboMetadata::_perform_query: Got exception while opening url: {e}")
+        tree, is_search = self._get_webpage(url, log, timeout)
+        if tree is None:
+            log.info(f"KoboMetadata::_lookup_metadata: Could not get url: {url}")
+            return []
+
+        # Some queries (esp ISBN) can redirect straight to the product page
+        if is_search:
+            search_results_elements = tree.xpath("//h2[@class='title product-field']/a")
+            return [x.get("href") for x in search_results_elements]
+        else:
+            return [url]
+
+    # Given the url for a book, parse and return the metadata
+    def _lookup_metadata(self, url: str, log: Log, timeout: int) -> Optional[Metadata]:
+        tree, is_search = self._get_webpage(url, log, timeout)
+        if tree is None or is_search:
+            log.info(f"KoboMetadata::_lookup_metadata: Could not get url: {url}")
             return None
-        tree = html.fromstring(raw)
-
-        search_results_elements = tree.xpath("//h2[@class='title product-field']/a")
-        results = [x.get("href") for x in search_results_elements]
-        # Filter for explicitly ebook results (can match audiobooks otherwise)
-        expected_url_start = self._get_base_url() + "ebook/"
-        return [x for x in results if x.startswith(expected_url_start)]
-
-    def _lookup_metadata(self, url: str, log: Log, timeout: int) -> Metadata:
-        br = self._get_browser()
-        raw = br.open_novisit(url, timeout=timeout).read()
-        tree = html.fromstring(raw)
 
         title_elements = tree.xpath("//h1[@class='title product-field']")
         title = title_elements[0].text.strip()
@@ -367,7 +377,7 @@ class KoboMetadata(Source):
         return metadata
 
     # Returns the set of words in the title that are also blacklisted
-    def _check_title_blacklist(self, title: str, log: Log) -> set:
+    def _check_title_blacklist(self, title: str, log: Log) -> set[str]:
         if not self.prefs["title_blacklist"]:
             return None
 
@@ -378,10 +388,10 @@ class KoboMetadata(Source):
         return blacklisted_words.intersection(title_str.lower().split(" "))
 
     # Returns the set of tags that are also blacklisted
-    def _check_tag_blacklist(self, tags: set[str], log: Log) -> set:
+    def _check_tag_blacklist(self, tags: set[str], log: Log) -> set[str]:
         if not self.prefs["tag_blacklist"]:
             return None
 
         blacklisted_tags = {x.strip().lower() for x in self.prefs["tag_blacklist"].split(",")}
-        log.info(f"KoboMetadata::_check_tag_blacklist: blacklisted tags: blacklisted_tags")
+        log.info(f"KoboMetadata::_check_tag_blacklist: blacklisted tags: {blacklisted_tags}")
         return blacklisted_tags.intersection({x.lower() for x in tags})
