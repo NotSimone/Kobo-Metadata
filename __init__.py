@@ -231,7 +231,7 @@ class KoboMetadata(Source):
         result_queue.put((self, cover))
 
     def _get_search_url(self, search_str: str, page_number: int) -> str:
-        query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number}
+        query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": "all"}
         return f"{self.BASE_URL}{self.prefs['country']}/en/search?{urlencode(query)}"
 
     def _generate_query(self, title: str, authors: list[str]) -> str:
