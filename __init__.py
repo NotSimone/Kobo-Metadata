@@ -17,7 +17,7 @@ from lxml import html
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "NotSimone"
-    version = (1, 4, 0)
+    version = (1, 5, 0)
     minimum_calibre_version = (5, 0, 0)
     description = _("Downloads metadata and covers from Kobo")
 
