@@ -18,7 +18,7 @@ class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "NotSimone"
     version = (1, 4, 0)
-    minimum_calibre_version = (2, 82, 0)
+    minimum_calibre_version = (5, 0, 0)
     description = _("Downloads metadata and covers from Kobo")
 
     capabilities = frozenset(("identify", "cover"))
