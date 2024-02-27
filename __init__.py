@@ -1,7 +1,7 @@
 import re
 import string
 from queue import Queue
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from urllib.parse import urlencode
 
 from calibre import browser
@@ -259,9 +259,9 @@ class KoboMetadata(Source):
     def _get_webpage(self, url: str, log: Log, timeout: int) -> Tuple[Optional[html.Element], bool]:
         br = self._get_browser()
         try:
-            raw = br.open_novisit(url, timeout=timeout).read()
-            tree = html.fromstring(raw)
-            is_search = len(tree.xpath("//div[@class='search-results-display kobo-gizmo']")) != 0
+            resp = br.open_novisit(url, timeout=timeout)
+            tree = html.fromstring(resp.read())
+            is_search = "/search?" in resp.geturl()
             return (tree, is_search)
         except Exception as e:
             log.error(f"KoboMetadata::_get_webpage: Got exception while opening url: {e}")
@@ -281,19 +281,32 @@ class KoboMetadata(Source):
         if not is_search:
             return [url]
 
-        search_results_elements = tree.xpath("//h2[@class='title product-field']/a")
-        results = [x.get("href") for x in search_results_elements]
+        results = self._get_search_matches(tree, log)
 
         page_num = 2
-        while len(results) < self.prefs["num_matches"]:
+        # a reasonable default for how many we should try before we give up
+        max_page_num = 4
+        while len(results) < self.prefs["num_matches"] and page_num < max_page_num:
             url = self._get_search_url(query, page_num)
             tree, is_search = self._get_webpage(url, log, timeout)
             assert tree and is_search
-            search_results_elements = tree.xpath("//h2[@class='title product-field']/a")
-            results.extend([x.get("href") for x in search_results_elements])
+            results.extend(self._get_search_matches(tree, log))
             page_num += 1
 
         return results[: self.prefs["num_matches"]]
+
+    def _get_search_matches(self, page: html.Element, log: Log) -> List[str]:
+        # Kobo seems to have partially moved to a new webpage for their search pages
+        if len(page.xpath("//div[@data-testid='search-result-widget']")):
+            log.info("KoboMetadata::_get_search_matches: Detected new search page")
+            result_elements = page.xpath("//a[@data-testid='title']")
+            # Only get every second because the page includes mobile and web urls
+            return [x.get("href") for x in result_elements[::2]]
+
+        # Old
+        log.info("KoboMetadata::_get_search_matches: Detected old search page")
+        result_elements = page.xpath("//h2[@class='title product-field']/a")
+        return [x.get("href") for x in result_elements]
 
     # Given the url for a book, parse and return the metadata
     def _lookup_metadata(self, url: str, log: Log, timeout: int) -> Optional[Metadata]:
