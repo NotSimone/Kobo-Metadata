@@ -30,87 +30,56 @@ class KoboMetadataImpl:
     def identify(
         self,
         result_queue: Queue,
-        title: Optional[str],
-        authors: Optional[List[str]],
+        title: str,
+        authors: List[str],
         identifiers: Dict[str, any],
         prefs: Dict[str, any],
         timeout: int,
         log: Log,
     ) -> None:
         log.info(f"KoboMetadata::identify: title: {title}, authors: {authors}, identifiers: {identifiers}")
-
-        isbn = check_isbn(identifiers.get("isbn", None))
         urls = []
 
+        isbn = check_isbn(identifiers.get("isbn", None))
         if isbn:
-            log.info(f"KoboMetadata::identify: Getting metadata with isbn: {isbn}")
-            # isbn searches will (sometimes) redirect to the product page
-            isbn_urls = self._perform_query(isbn, prefs, timeout, log)
-            if isbn_urls:
-                urls.extend(isbn_urls)
-
-        query = self._generate_query(title, authors, prefs)
-        log.info(f"KoboMetadata::identify: Searching with query: {query}")
-        urls.extend(self._perform_query(query, prefs, timeout, log))
-
-        index = 0
-        for url in urls:
-            log.info(f"KoboMetadata::identify: Looking up metadata with url: {url}")
-            try:
-                tree, is_search = self._get_webpage(url, timeout, log)
-                if tree is None or is_search:
-                    log.info(f"KoboMetadata::identify: Could not get url: {url}")
-                    return
-                metadata = self._parse_book_page(tree, prefs, log)
-            except Exception as e:
-                log.error(f"KoboMetadata::identify: Got exception looking up metadata: {e}")
-                return
-
-            if metadata:
-                metadata.source_relevance = index
-                result_queue.put(metadata)
-            else:
-                log.info("KoboMetadata::identify:: Could not find matching book")
-            index += 1
-        return
+            urls.extend(self._perform_isbn_search(isbn, prefs["num_matches"], prefs, timeout, log))
+        urls.extend(self._perform_search(title, authors, prefs["num_matches"], prefs, timeout, log))
+        fetched_metadata = self._fetch_metadata(urls, prefs, timeout, log)
+        for metadata in fetched_metadata:
+            result_queue.put(metadata)
 
     def get_cover_url(
         self,
-        title: Optional[str],
-        authors: Optional[List[str]],
+        title: str,
+        authors: List[str],
         identifiers: Dict[str, any],
         prefs: Dict[str, any],
         timeout: int,
         log: Log,
     ) -> None:
         log.info(f"KoboMetadata::get_cover_url: title: {title}, authors: {authors}, identifiers: {identifiers}")
+        urls = []
 
-        url = None
         isbn = check_isbn(identifiers.get("isbn", None))
         if isbn:
-            log.info(f"KoboMetadata::get_cover_url: Getting metadata with isbn: {isbn}")
-            # isbn searches will (sometimes) redirect to the product page
-            isbn_urls = self._perform_query(isbn, prefs, timeout, log)
-            if isbn_urls:
-                url = isbn_urls[0]
+            urls.extend(self._perform_isbn_search(isbn, 1, prefs, timeout, log))
 
-        if not url:
-            query = self._generate_query(title, authors, prefs)
-            log.info(f"KoboMetadata::get_cover_url: Searching with query: {query}")
-            results = self._perform_query(query, prefs, timeout, log)
-            if not results:
-                log.error("KoboMetadata::get_cover_url:: No search results")
-                return
-            else:
-                url = results[0]
+        # Only go looking for more matches if we couldn't match isbn
+        if not urls:
+            log.error("KoboMetadata::get_cover_url:: No identifier - performing search")
+            urls.extend(self._perform_search(title, authors, 1, prefs, timeout, log))
 
-        tree, is_search = self._get_webpage(url, timeout, log)
-        if tree is None or is_search:
-            log.info(f"KoboMetadata::get_cover_url: Could not get url: {url}")
+        if not urls:
+            log.error("KoboMetadata::get_cover_url:: No search results")
             return
 
-        # Parsing the book page should be setting the cached url field
-        self._parse_book_page(tree, prefs, log)
+        url = urls[0]
+        page, is_search = self._get_webpage(url, timeout, log)
+        if page is None or is_search:
+            log.info(f"KoboMetadata::get_cover_url: Could not get url: {url}")
+            return ""
+
+        return self._parse_book_page_for_cover(page, prefs, log)
 
     def get_cover(self, cover_url: str, timeout: int) -> bytes:
         session = self._get_session()
@@ -119,7 +88,7 @@ class KoboMetadataImpl:
     def _get_session(self) -> requests.Session:
         if self.session is None:
             self.session = cloudscraper.create_scraper(
-                browser={"browser": "firefox", "platform": "windows", "mobile": False}, interpreter="v8"
+                browser={"browser": "chrome", "platform": "windows", "mobile": False}, interpreter="v8"
             )
         return self.session
 
@@ -128,12 +97,51 @@ class KoboMetadataImpl:
         session = self._get_session()
         try:
             resp = session.get(url, timeout=timeout)
-            tree = html.fromstring(resp.text)
+            page = html.fromstring(resp.text)
             is_search = "/search?" in resp.url
-            return (tree, is_search)
+            return (page, is_search)
         except Exception as e:
             log.error(f"KoboMetadata::get_webpage: Got exception while opening url: {e}")
             return (None, False)
+
+    def _perform_isbn_search(
+        self, isbn: int, max_matches: int, prefs: Dict[str, any], timeout: int, log: Log
+    ) -> List[str]:
+        isbn = check_isbn(isbn)
+
+        if isbn:
+            log.info(f"KoboMetadata::perform_isbn_search: Getting metadata with isbn: {isbn}")
+            return self._perform_query(isbn, max_matches, prefs, timeout, log)
+
+    def _perform_search(
+        self, title: str, authors: List[str], max_matches: int, prefs: Dict[str, any], timeout: int, log: Log
+    ) -> List[str]:
+        query = self._generate_query(title, authors, prefs)
+        log.info(f"KoboMetadata::perform_search: Searching with query: {query}")
+        return self._perform_query(query, max_matches, prefs, timeout, log)
+
+    def _fetch_metadata(self, urls: List[str], prefs: Dict[str, any], timeout: int, log: Log) -> List[Metadata]:
+        results = []
+        index = 0
+        for url in urls:
+            log.info(f"KoboMetadata::fetch_metadata: Looking up metadata with url: {url}")
+            try:
+                page, is_search = self._get_webpage(url, timeout, log)
+                if page is None or is_search:
+                    log.info(f"KoboMetadata::fetch_metadata: Could not get url: {url}")
+                    return
+                metadata = self._parse_book_page(page, prefs, log)
+            except Exception as e:
+                log.error(f"KoboMetadata::fetch_metadata: Got exception looking up metadata: {e}")
+                return
+
+            if metadata:
+                metadata.source_relevance = index
+                results.append(metadata)
+            else:
+                log.info("KoboMetadata::fetch_metadata:: Could not find matching book")
+            index += 1
+        return results
 
     def _generate_query(self, title: str, authors: list[str], prefs: Dict[str, any]) -> str:
         # Remove leading zeroes from the title if configured
@@ -149,12 +157,12 @@ class KoboMetadataImpl:
         return title
 
     # Returns a list of urls that match our search
-    def _perform_query(self, query: str, prefs: Dict[str, any], timeout: int, log: Log) -> list[str]:
+    def _perform_query(self, query: str, max_matches: int, prefs: Dict[str, any], timeout: int, log: Log) -> list[str]:
         url = self.get_search_url(query, 1, prefs)
-        log.info(f"KoboMetadata::identify: Searching for book with url: {url}")
+        log.info(f"KoboMetadata::perform_query: Searching for book with url: {url}")
 
-        tree, is_search = self._get_webpage(url, timeout, log)
-        if tree is None:
+        page, is_search = self._get_webpage(url, timeout, log)
+        if page is None:
             log.info(f"KoboMetadata::perform_query: Could not get url: {url}")
             return []
 
@@ -162,19 +170,19 @@ class KoboMetadataImpl:
         if not is_search:
             return [url]
 
-        results = self._parse_search_page(tree, log)
+        results = self._parse_search_page(page, log)
 
         page_num = 2
         # a reasonable default for how many we should try before we give up
         max_page_num = 4
-        while len(results) < prefs["num_matches"] and page_num < max_page_num:
+        while len(results) < max_matches and page_num < max_page_num:
             url = self.get_search_url(query, page_num, prefs)
-            tree, is_search = self._get_webpage(url, timeout, log)
-            assert tree and is_search
-            results.extend(self._parse_search_page(tree, log))
+            page, is_search = self._get_webpage(url, timeout, log)
+            assert page and is_search
+            results.extend(self._parse_search_page(page, log))
             page_num += 1
 
-        return results[: prefs["num_matches"]]
+        return results[:max_matches]
 
     # Returns a list of urls on the search web page
     def _parse_search_page(self, page: html.Element, log: Log) -> List[str]:
@@ -186,12 +194,13 @@ class KoboMetadataImpl:
             return [x.get("href") for x in result_elements[::2]]
 
         # Old
-        log.info("KoboMetadata::parse_search_page: Detected old search page")
         result_elements = page.xpath("//h2[@class='title product-field']/a")
         if len(result_elements):
+            log.info("KoboMetadata::parse_search_page: Detected old search page")
             return [x.get("href") for x in result_elements]
 
         log.error("KoboMetadata::parse_search_page: Found no matches or bad page")
+        log.error(html.tostring(page))
         return []
 
     # Given a page that has the details of a book, parse and return the Metadata
@@ -250,6 +259,23 @@ class KoboMetadataImpl:
             metadata.comments = html.tostring(synopsis_elements[0], method="html")
             log.info(f"KoboMetadata::parse_book_page: Got comments: {metadata.comments}")
 
+        cover_url = self._parse_book_page_for_cover(page, prefs, log)
+        if cover_url:
+            self.plugin.cache_identifier_to_cover_url(metadata.isbn, cover_url)
+
+        blacklisted_title = self._check_title_blacklist(title, prefs, log)
+        if blacklisted_title:
+            log.info(f"KoboMetadata::parse_book_page: Hit blacklisted word(s) in the title: {blacklisted_title}")
+            return None
+
+        blacklisted_tags = self._check_tag_blacklist(metadata.tags, prefs, log)
+        if blacklisted_tags:
+            log.info(f"KoboMetadata::parse_book_page: Hit blacklisted tag(s): {blacklisted_tags}")
+            return None
+
+        return metadata
+
+    def _parse_book_page_for_cover(self, page: html.Element, prefs: Dict[str, any], log: Log) -> str:
         cover_elements = page.xpath("//img[contains(@class, 'cover-image')]")
         if cover_elements:
             # Sample: https://cdn.kobo.com/book-images/44f0e8b9-3338-4d1c-bd6e-e88e82cb8fad/353/569/90/False/holly-23.jpg
@@ -263,20 +289,9 @@ class KoboMetadataImpl:
                 # Removing this gets the original cover art (probably)
                 # Sample: https://cdn.kobo.com/book-images/44f0e8b9-3338-4d1c-bd6e-e88e82cb8fad/holly-23.jpg
                 cover_url = cover_url.replace("353/569/90/False/", "")
-            self.plugin.cache_identifier_to_cover_url(metadata.isbn, cover_url)
-            log.info(f"KoboMetadata::parse_book_page: Got cover: {cover_url}")
 
-        blacklisted_title = self._check_title_blacklist(title, prefs, log)
-        if blacklisted_title:
-            log.info(f"KoboMetadata::parse_book_page: Hit blacklisted word(s) in the title: {blacklisted_title}")
-            return None
-
-        blacklisted_tags = self._check_tag_blacklist(metadata.tags, prefs, log)
-        if blacklisted_tags:
-            log.info(f"KoboMetadata::parse_book_page: Hit blacklisted tag(s): {blacklisted_tags}")
-            return None
-
-        return metadata
+        log.info(f"KoboMetadata::parse_book_page_for_cover: Got cover: {cover_url}")
+        return cover_url
 
     # Returns the set of words in the title that are also blacklisted
     def _check_title_blacklist(self, title: str, prefs: Dict[str, any], log: Log) -> set[str]:

@@ -4,7 +4,7 @@ from calibre.ebooks.metadata.sources.base import Option, Source
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "NotSimone"
-    version = (1, 6, 1)
+    version = (1, 6, 2)
     minimum_calibre_version = (5, 0, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -170,10 +170,9 @@ class KoboMetadata(Source):
         cover_url = self.get_cached_cover_url(identifiers)
         if not cover_url:
             log.info("KoboMetadata::download_cover: No cached url found, running identify")
-            self._impl.get_cover_url(title, authors, identifiers, self.prefs, timeout, log)
+            cover_url = self._impl.get_cover_url(title, authors, identifiers, self.prefs, timeout, log)
 
-        # Try again now that we set the cached url
-        cover_url = self.get_cached_cover_url(identifiers)
+        # If we still dont have the cover, its over
         if not cover_url:
             log.error("KoboMetadata::download_cover: Could not get cover")
             return
