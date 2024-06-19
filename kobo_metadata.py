@@ -47,7 +47,7 @@ class KoboMetadataImpl:
             # isbn searches will (sometimes) redirect to the product page
             isbn_urls = self._perform_query(isbn, prefs, timeout, log)
             if isbn_urls:
-                urls.extend(isbn_urls[0])
+                urls.extend(isbn_urls)
 
         query = self._generate_query(title, authors, prefs)
         log.info(f"KoboMetadata::identify: Searching with query: {query}")
@@ -188,7 +188,11 @@ class KoboMetadataImpl:
         # Old
         log.info("KoboMetadata::parse_search_page: Detected old search page")
         result_elements = page.xpath("//h2[@class='title product-field']/a")
-        return [x.get("href") for x in result_elements]
+        if len(result_elements):
+            return [x.get("href") for x in result_elements]
+
+        log.error("KoboMetadata::parse_search_page: Found no matches or bad page")
+        return []
 
     # Given a page that has the details of a book, parse and return the Metadata
     def _parse_book_page(self, page: html.Element, prefs: Dict[str, any], log: Log) -> Metadata:
