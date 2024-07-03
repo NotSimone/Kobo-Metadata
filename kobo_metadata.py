@@ -96,10 +96,18 @@ class KoboMetadataImpl:
     def _get_webpage(self, url: str, timeout: int, log: Log) -> Tuple[Optional[html.Element], bool]:
         session = self._get_session()
         try:
-            resp = session.get(url, timeout=timeout)
-            page = html.fromstring(resp.text)
-            is_search = "/search?" in resp.url
-            return (page, is_search)
+            attempts = 0
+            while attempts < 10:
+                resp = session.get(url, timeout=timeout)
+                page = html.fromstring(resp.text)
+                # If we failed to get past the cloudflare protection, we get a page with this class
+                if not page.xpath("//form[@class='challenge-form']"):
+                    is_search = "/search?" in resp.url
+                    return (page, is_search)
+                log.info(f"KoboMetadata::get_webpage: Could not defeat cloudflare protection - trying again for {url}")
+                attempts += 1
+            log.error(f"KoboMetadata::get_webpage: Could not defeat cloudflare protection - giving up for {url}")
+            return (None, False)
         except Exception as e:
             log.error(f"KoboMetadata::get_webpage: Got exception while opening url: {e}")
             return (None, False)
