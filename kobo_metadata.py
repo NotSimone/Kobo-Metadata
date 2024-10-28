@@ -1,5 +1,6 @@
 import re
 import string
+import time
 from queue import Queue
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlencode
@@ -100,12 +101,13 @@ class KoboMetadataImpl:
             while attempts < 10:
                 resp = session.get(url, timeout=timeout)
                 page = html.fromstring(resp.text)
-                # If we failed to get past the cloudflare protection, we get a page with this class
-                if not page.xpath("//form[@class='challenge-form']"):
+                # If we failed to get past the cloudflare protection, we get a page with one of these classes
+                if not page.xpath("//form[@class='challenge-form']") and not page.xpath("//form[@id='challenge-form']"):
                     is_search = "/search?" in resp.url
                     return (page, is_search)
                 log.info(f"KoboMetadata::get_webpage: Could not defeat cloudflare protection - trying again for {url}")
                 attempts += 1
+                time.sleep(0.01)
             log.error(f"KoboMetadata::get_webpage: Could not defeat cloudflare protection - giving up for {url}")
             return (None, False)
         except Exception as e:
@@ -249,7 +251,7 @@ class KoboMetadataImpl:
                 if descriptor == "Release Date:":
                     metadata.pubdate = parse_only_date(x.xpath("span")[0].text)
                     log.info(f"KoboMetadata::parse_book_page: Got pubdate: {metadata.pubdate}")
-                elif descriptor == "ISBN:":
+                elif descriptor == "ISBN:" or descriptor == "Book ID:":
                     metadata.isbn = x.xpath("span")[0].text
                     log.info(f"KoboMetadata::parse_book_page: Got isbn: {metadata.isbn}")
                 elif descriptor == "Language:":
