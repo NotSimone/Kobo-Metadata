@@ -89,7 +89,11 @@ class KoboMetadataImpl:
     def _get_session(self) -> requests.Session:
         if self.session is None:
             self.session = cloudscraper.create_scraper(
-                browser={"browser": "chrome", "platform": "windows", "mobile": False}, interpreter="v8"
+                browser={
+                    "custom": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+                },
+                interpreter="v8",
+                ecdhCurve="secp384r1",
             )
         return self.session
 
@@ -98,7 +102,7 @@ class KoboMetadataImpl:
         session = self._get_session()
         try:
             attempts = 0
-            while attempts < 10:
+            while attempts < 15:
                 resp = session.get(url, timeout=timeout)
                 page = html.fromstring(resp.text)
                 # If we failed to get past the cloudflare protection, we get a page with one of these classes
@@ -107,7 +111,7 @@ class KoboMetadataImpl:
                     return (page, is_search)
                 log.info(f"KoboMetadata::get_webpage: Could not defeat cloudflare protection - trying again for {url}")
                 attempts += 1
-                time.sleep(0.01)
+                time.sleep(1.0)
             log.error(f"KoboMetadata::get_webpage: Could not defeat cloudflare protection - giving up for {url}")
             return (None, False)
         except Exception as e:
