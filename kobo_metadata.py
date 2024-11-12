@@ -25,7 +25,7 @@ class KoboMetadataImpl:
         self.plugin = plugin
 
     def get_search_url(self, search_str: str, page_number: int, prefs: Dict[str, any]) -> str:
-        query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": "all"}
+        query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": prefs["language"]}
         return f"{self.BASE_URL}{prefs['country']}/en/search?{urlencode(query)}"
 
     def identify(

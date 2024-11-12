@@ -4,7 +4,7 @@ from calibre.ebooks.metadata.sources.base import Option, Source
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "NotSimone"
-    version = (1, 7, 1)
+    version = (1, 8, 0)
     minimum_calibre_version = (5, 0, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -79,6 +79,7 @@ class KoboMetadata(Source):
             _("Metadata from Kobo will be fetched from this store"),
             choices=COUNTRIES,
         ),
+        Option("language", "string", "all", _("2 Letter language code to search for"), _("Default: all")),
         Option(
             "num_matches",
             "number",
