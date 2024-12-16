@@ -106,7 +106,11 @@ class KoboMetadataImpl:
                 resp = session.get(url, timeout=timeout)
                 page = html.fromstring(resp.text)
                 # If we failed to get past the cloudflare protection, we get a page with one of these classes
-                if not page.xpath("//form[@class='challenge-form']") and not page.xpath("//form[@id='challenge-form']"):
+                if (
+                    not page.xpath("//form[@class='challenge-form']")
+                    and not page.xpath("//form[@id='challenge-form']")
+                    and not page.xpath("//span[@id='challenge-error-text']")
+                ):
                     is_search = "/search?" in resp.url
                     return (page, is_search)
                 log.info(f"KoboMetadata::get_webpage: Could not defeat cloudflare protection - trying again for {url}")
