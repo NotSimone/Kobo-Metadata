@@ -4,7 +4,7 @@ from calibre.ebooks.metadata.sources.base import Option, Source
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "NotSimone"
-    version = (1, 9, 1)
+    version = (1, 10, 0)
     minimum_calibre_version = (5, 0, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -79,7 +79,7 @@ class KoboMetadata(Source):
             _("Metadata from Kobo will be fetched from this store"),
             choices=COUNTRIES,
         ),
-        Option("language", "string", "all", _("2 Letter language code to search for"), _("Default: all")),
+        Option("language", "string", "en", _("2 Letter language code to search for"), _("Default: en")),
         Option(
             "num_matches",
             "number",
@@ -135,11 +135,11 @@ class KoboMetadata(Source):
         kobo = identifiers.get("kobo", None)
 
         if kobo:
-            return ("kobo", kobo, self._impl.get_kobo_url(kobo))
+            return ("kobo", kobo, self._impl.get_kobo_url(kobo, self.prefs))
 
         if isbn:
             # Example output:"https://www.kobo.com/au/en/search?query=9781761108105"
-            return ("isbn", isbn, self._impl.get_search_url(isbn, 1))
+            return ("isbn", isbn, self._impl.get_search_url(isbn, 1, self.prefs))
         return None
 
     def get_cached_cover_url(self, identifiers):

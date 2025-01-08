@@ -26,10 +26,10 @@ class KoboMetadataImpl:
 
     def get_search_url(self, search_str: str, page_number: int, prefs: Dict[str, any]) -> str:
         query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": prefs["language"]}
-        return f"{self.BASE_URL}{prefs['country']}/en/search?{urlencode(query)}"
+        return f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/search?{urlencode(query)}"
     
-    def get_kobo_url(self, kobo_id: str) -> str:
-        return f"{self.BASE_URL}en/ebook/{kobo_id}"
+    def get_kobo_url(self, kobo_id: str, prefs: Dict[str, any]) -> str:
+        return f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/ebook/{kobo_id}"
 
     def identify(
         self,
