@@ -176,9 +176,7 @@ class KoboMetadata(Source):
         cover_url = self.get_cached_cover_url(identifiers)
         if not cover_url:
             log.info("KoboMetadata::download_cover: No cached url found, running identify")
-            cover_url = self._impl.get_cover_url(
-                title, authors, identifiers, self.prefs, timeout, log
-            )
+            cover_url = self._impl.get_cover_url(title, authors, identifiers, self.prefs, timeout, log)
 
         # If we still dont have the cover, its over
         if not cover_url:
