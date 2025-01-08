@@ -27,6 +27,9 @@ class KoboMetadataImpl:
     def get_search_url(self, search_str: str, page_number: int, prefs: Dict[str, any]) -> str:
         query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": prefs["language"]}
         return f"{self.BASE_URL}{prefs['country']}/en/search?{urlencode(query)}"
+    
+    def get_kobo_url(self, kobo_id: str) -> str:
+        return f"{self.BASE_URL}en/ebook/{kobo_id}"
 
     def identify(
         self,
@@ -42,6 +45,9 @@ class KoboMetadataImpl:
         urls = []
 
         isbn = check_isbn(identifiers.get("isbn", None))
+        kobo = identifiers.get("kobo", None)
+        if kobo:
+            urls.append(self.get_kobo_url(kobo))
         if isbn:
             urls.extend(self._perform_isbn_search(isbn, prefs["num_matches"], prefs, timeout, log))
         urls.extend(self._perform_search(title, authors, prefs["num_matches"], prefs, timeout, log))

@@ -132,6 +132,11 @@ class KoboMetadata(Source):
 
     def get_book_url(self, identifiers):
         isbn = identifiers.get("isbn", None)
+        kobo = identifiers.get("kobo", None)
+
+        if kobo:
+            return ("kobo", kobo, self._impl.get_kobo_url(kobo))
+
         if isbn:
             # Example output:"https://www.kobo.com/au/en/search?query=9781761108105"
             return ("isbn", isbn, self._impl.get_search_url(isbn, 1))
@@ -171,7 +176,9 @@ class KoboMetadata(Source):
         cover_url = self.get_cached_cover_url(identifiers)
         if not cover_url:
             log.info("KoboMetadata::download_cover: No cached url found, running identify")
-            cover_url = self._impl.get_cover_url(title, authors, identifiers, self.prefs, timeout, log)
+            cover_url = self._impl.get_cover_url(
+                title, authors, identifiers, self.prefs, timeout, log
+            )
 
         # If we still dont have the cover, its over
         if not cover_url:
