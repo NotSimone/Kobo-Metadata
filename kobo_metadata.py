@@ -47,7 +47,7 @@ class KoboMetadataImpl:
         isbn = check_isbn(identifiers.get("isbn", None))
         kobo = identifiers.get("kobo", None)
         if kobo:
-            urls.append(self.get_kobo_url(kobo))
+            urls.append(self.get_kobo_url(kobo), prefs)
         if isbn:
             urls.extend(self._perform_isbn_search(isbn, prefs["num_matches"], prefs, timeout, log))
         urls.extend(self._perform_search(title, authors, prefs["num_matches"], prefs, timeout, log))
