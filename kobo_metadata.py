@@ -278,9 +278,9 @@ class KoboMetadataImpl:
             metadata.tags = {x.get("content").replace(", ", " ") for x in tags_elements}
             log.info(f"KoboMetadata::parse_book_page: Got tags: {metadata.tags}")
 
-        synopsis_elements = page.xpath("//div[@class='synopsis-description']")
+        synopsis_elements = page.xpath("//div[@data-full-synopsis='']")
         if synopsis_elements:
-            metadata.comments = html.tostring(synopsis_elements[0], method="html")
+            metadata.comments = synopsis_elements[0].text_content()
             log.info(f"KoboMetadata::parse_book_page: Got comments: {metadata.comments}")
 
         cover_url = self._parse_book_page_for_cover(page, prefs, log)
