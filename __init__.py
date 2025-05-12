@@ -31,7 +31,7 @@ class KoboMetadata(Source):
         "za": _("South Africa"),
         "au": _("Australia"),
         "hk": _("Hong Kong"),
-        "ja": _("Japan"),
+        "jp": _("Japan"),
         "my": _("Malaysia"),
         "nz": _("New Zealand"),
         "ph": _("Phillipines"),
