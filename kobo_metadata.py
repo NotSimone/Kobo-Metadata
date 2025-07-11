@@ -29,7 +29,11 @@ class KoboMetadataImpl:
         return f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/search?{urlencode(query)}"
     
     def get_kobo_url(self, kobo_id: str, prefs: Dict[str, any]) -> str:
-        return f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/ebook/{kobo_id}"
+        if prefs['language'] == 'all':
+            url = f"{self.BASE_URL}{prefs['country']}/ebook/{kobo_id}"
+        else:
+            url = f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/ebook/{kobo_id}"
+        return url
 
     def identify(
         self,
@@ -42,18 +46,41 @@ class KoboMetadataImpl:
         log: Log,
     ) -> None:
         log.info(f"KoboMetadata::identify: title: {title}, authors: {authors}, identifiers: {identifiers}")
-        urls = []
 
+        id_urls = []
         isbn = check_isbn(identifiers.get("isbn", None))
         kobo = identifiers.get("kobo", None)
+
         if kobo:
-            urls.append(self.get_kobo_url(kobo), prefs)
+            log.info(f"Searching with Kobo ID: {kobo}")
+            id_urls.append(self.get_kobo_url(kobo, prefs))
+
         if isbn:
-            urls.extend(self._perform_isbn_search(isbn, prefs["num_matches"], prefs, timeout, log))
-        urls.extend(self._perform_search(title, authors, prefs["num_matches"], prefs, timeout, log))
-        fetched_metadata = self._fetch_metadata(urls, prefs, timeout, log)
-        for metadata in fetched_metadata:
-            result_queue.put(metadata)
+            log.info(f"Searching with ISBN: {isbn}")
+            id_urls.extend(self._perform_isbn_search(isbn, prefs["num_matches"], prefs, timeout, log))
+
+        if id_urls:
+            unique_id_urls = list(dict.fromkeys(id_urls))
+            fetched_metadata = self._fetch_metadata(unique_id_urls, prefs, timeout, log)
+
+            if fetched_metadata:
+                log.info(f"Found {len(fetched_metadata)} match(es) using identifiers. Prioritizing these results.")
+                for metadata in fetched_metadata:
+                    result_queue.put(metadata)
+                return
+
+        # If no identifiers were provided, or they yielded no results, fall back to a general search.
+        log.info("No matches found with identifiers, falling back to general search.")
+        search_urls = self._perform_search(title, authors, prefs["num_matches"], prefs, timeout, log)
+
+        if search_urls:
+            unique_search_urls = list(dict.fromkeys(search_urls))
+            fetched_metadata = self._fetch_metadata(unique_search_urls, prefs, timeout, log)
+
+            if fetched_metadata:
+                log.info(f"Found {len(fetched_metadata)} match(es) using general search.")
+                for metadata in fetched_metadata:
+                    result_queue.put(metadata)
 
     def get_cover_url(
         self,
