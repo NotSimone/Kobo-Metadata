@@ -307,7 +307,10 @@ class KoboMetadataImpl:
 
         synopsis_elements = page.xpath("//div[@data-full-synopsis='']")
         if synopsis_elements:
-            metadata.comments = synopsis_elements[0].text_content()
+            metadata.comments = "".join(
+                html.tostring(child, encoding="unicode") 
+                for child in synopsis_elements[0]
+            )
             log.info(f"KoboMetadata::parse_book_page: Got comments: {metadata.comments}")
 
         cover_url = self._parse_book_page_for_cover(page, prefs, log)
