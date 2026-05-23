@@ -202,7 +202,7 @@ class KoboMetadataImpl:
             for x in self.plugin.get_title_tokens(title, strip_joiners=False, strip_subtitle=False)
         )
 
-        if authors:
+        if authors and prefs["use_author"]:
             title += " " + " ".join(self.plugin.get_author_tokens(authors))
 
         return title
