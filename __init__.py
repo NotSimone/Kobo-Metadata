@@ -119,6 +119,7 @@ class KoboMetadata(Source):
             _("Resize cover"),
             _("Resize the cover to the maximum_cover_size tweak setting"),
         ),
+        Option("use_author", "bool", True, ("Use author information for search?"), ("Use author information for the search of metadata/cover when selected; recommended for light novels")),
     )
 
     _impl = None
