@@ -26,8 +26,8 @@ class KoboMetadataImpl:
 
     def get_search_url(self, search_str: str, page_number: int, prefs: Dict[str, any]) -> str:
         query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": prefs["language"]}
-        if prefs["only_light_novels"]:
-            query["id"] = "dac63710-e136-4309-ac7f-d517e2202171" # Kobo tag for light novels
+        if prefs["only_light_novels"] and prefs["language"] == "ja" and prefs["country"] == "jp":
+            query["id"] = "dac63710-e136-4309-ac7f-d517e2202171" # Kobo tag for light novels in the Japanese store
         return f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/search?{urlencode(query)}"
     
     def get_kobo_url(self, kobo_id: str, prefs: Dict[str, any]) -> str:
