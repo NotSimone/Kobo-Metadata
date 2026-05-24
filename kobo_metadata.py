@@ -36,6 +36,12 @@ class KoboMetadataImpl:
         else:
             url = f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/ebook/{kobo_id}"
         return url
+    
+    @staticmethod
+    def check_isbn_valid(isbn: str) -> bool:
+        if not isbn:
+            return False
+        return isbn[:3] == "978" or isbn[:3] == "979"
 
     def identify(
         self,
@@ -99,6 +105,10 @@ class KoboMetadataImpl:
         isbn = check_isbn(identifiers.get("isbn", None))
         if isbn:
             urls.extend(self._perform_isbn_search(isbn, 1, prefs, timeout, log))
+
+        kobo = identifiers.get("kobo", None)
+        if kobo:
+            urls.append(self.get_kobo_url(kobo, prefs))
 
         # Only go looking for more matches if we couldn't match isbn
         if not urls:
@@ -292,6 +302,7 @@ class KoboMetadataImpl:
             for x in book_details_elements[1:]:
                 descriptor = x.text.strip()
                 data = x.xpath("span")[0].text if x.xpath("span") else None
+
                 if descriptor == "Release Date:" or descriptor == "発売日：": # japanese colon is different
                     if prefs["language"] == "ja":
                         date_match = re.match("(\d{4})年(\d{1,2})月(\d{1,2})日", data)
@@ -299,9 +310,15 @@ class KoboMetadataImpl:
                     if data:
                         metadata.pubdate = parse_only_date(data)
                         log.info(f"KoboMetadata::parse_book_page: Got pubdate: {metadata.pubdate}")
+
                 elif descriptor == "ISBN:" or descriptor == "Book ID:" or descriptor == "書籍ID：":
-                    metadata.isbn = x.xpath("span")[0].text
-                    log.info(f"KoboMetadata::parse_book_page: Got isbn: {metadata.isbn}")
+                    if prefs["differentiate_kobo_isbn"] and not KoboMetadataImpl.check_isbn_valid(data):
+                        metadata.set_identifier('kobo', data)
+                        log.info(f"KoboMetadata::parse_book_page: Got kobo book id: {data}")
+                    else:
+                        metadata.isbn = data
+                        log.info(f"KoboMetadata::parse_book_page: Got isbn: {metadata.isbn}")
+
                 elif descriptor == "Language:" or descriptor == "言語：":
                     if prefs["language"] == "ja":
                         # Assuming JP store will be mainly used for JP books, otherwise to much baggage to add all languages
@@ -325,7 +342,7 @@ class KoboMetadataImpl:
 
         cover_url = self._parse_book_page_for_cover(page, prefs, log)
         if cover_url:
-            self.plugin.cache_identifier_to_cover_url(metadata.isbn, cover_url)
+            self.plugin.cache_identifier_to_cover_url(metadata.isbn if metadata.isbn else metadata.identifiers['kobo'], cover_url)
 
         blacklisted_title = self._check_title_blacklist(title, prefs, log)
         if blacklisted_title:
