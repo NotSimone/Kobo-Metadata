@@ -119,8 +119,9 @@ class KoboMetadata(Source):
             _("Resize cover"),
             _("Resize the cover to the maximum_cover_size tweak setting"),
         ),
-        Option("use_author", "bool", True, ("Use author information for search?"), ("Use author information for the search of metadata/cover when selected; recommended for light novels")),
-        Option("only_light_novels", "bool", False, ("Use Light Novel tag? (!Only usable on japanese Kobo)"), ("USe Light Novel tag for the search to avoid same named mangas."))
+        Option("differentiate_kobo_isbn", "bool", False, ("Differentiate between Kobo ID and ISBN?"), ("Do not falsely write Kobo ID as ISBN.")),
+        Option("use_author", "bool", True, ("Use author information for search?"), ("Use author information for the search of metadata/cover when selected; recommended for light novels.")),
+        Option("only_light_novels", "bool", False, ("Use Light Novel tag? (!Only usable on japanese Kobo)"), ("Use Light Novel tag for the search to avoid same named mangas."))
     )
 
     _impl = None
@@ -146,9 +147,13 @@ class KoboMetadata(Source):
 
     def get_cached_cover_url(self, identifiers):
         isbn = identifiers.get("isbn", None)
+        kobo = identifiers.get("kobo", None)
 
         if isbn is not None:
             return self.cached_identifier_to_cover_url(isbn)
+        
+        if kobo is not None:
+            return self.cached_identifier_to_cover_url(kobo)
 
         return None
 
