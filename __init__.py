@@ -120,6 +120,7 @@ class KoboMetadata(Source):
             _("Resize the cover to the maximum_cover_size tweak setting"),
         ),
         Option("use_author", "bool", True, ("Use author information for search?"), ("Use author information for the search of metadata/cover when selected; recommended for light novels")),
+        Option("only_light_novels", "bool", False, ("Use Light Novel tag? (!Only usable on japanese Kobo)"), ("USe Light Novel tag for the search to avoid same named mangas."))
     )
 
     _impl = None
