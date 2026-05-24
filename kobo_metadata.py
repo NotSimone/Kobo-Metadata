@@ -26,6 +26,8 @@ class KoboMetadataImpl:
 
     def get_search_url(self, search_str: str, page_number: int, prefs: Dict[str, any]) -> str:
         query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": prefs["language"]}
+        if prefs["only_light_novels"]:
+            query["id"] = "dac63710-e136-4309-ac7f-d517e2202171" # Kobo tag for light novels
         return f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/search?{urlencode(query)}"
     
     def get_kobo_url(self, kobo_id: str, prefs: Dict[str, any]) -> str:
@@ -278,9 +280,9 @@ class KoboMetadataImpl:
 
             series_index_element = series_elements[-1].xpath("span[@class='sequenced-name-prefix']")
             if series_index_element:
-                series_index_match = re.match("Book (.*) - ", series_index_element[0].text)
+                series_index_match = re.match("(本:|Book) (.*) - ", series_index_element[0].text)
                 if series_index_match:
-                    metadata.series_index = series_index_match.groups(0)[0]
+                    metadata.series_index = series_index_match.groups(0)[1]
                     log.info(f"KoboMetadata::parse_book_page: Got series_index: {metadata.series_index}")
 
         book_details_elements = page.xpath("//div[@class='bookitem-secondary-metadata']/ul/li")
@@ -289,14 +291,22 @@ class KoboMetadataImpl:
             log.info(f"KoboMetadata::parse_book_page: Got publisher: {metadata.publisher}")
             for x in book_details_elements[1:]:
                 descriptor = x.text.strip()
-                if descriptor == "Release Date:":
-                    metadata.pubdate = parse_only_date(x.xpath("span")[0].text)
-                    log.info(f"KoboMetadata::parse_book_page: Got pubdate: {metadata.pubdate}")
-                elif descriptor == "ISBN:" or descriptor == "Book ID:":
+                data = x.xpath("span")[0].text if x.xpath("span") else None
+                if descriptor == "Release Date:" or descriptor == "発売日：": # japanese colon is different
+                    if prefs["language"] == "ja":
+                        date_match = re.match("(\d{4})年(\d{1,2})月(\d{1,2})日", data)
+                        data = f"{date_match.groups(0)[0]}-{date_match.groups(0)[1]}-{date_match.groups(0)[2]}"
+                    if data:
+                        metadata.pubdate = parse_only_date(data)
+                        log.info(f"KoboMetadata::parse_book_page: Got pubdate: {metadata.pubdate}")
+                elif descriptor == "ISBN:" or descriptor == "Book ID:" or descriptor == "書籍ID：":
                     metadata.isbn = x.xpath("span")[0].text
                     log.info(f"KoboMetadata::parse_book_page: Got isbn: {metadata.isbn}")
-                elif descriptor == "Language:":
-                    metadata.language = x.xpath("span")[0].text
+                elif descriptor == "Language:" or descriptor == "言語：":
+                    if prefs["language"] == "ja":
+                        # Assuming JP store will be mainly used for JP books, otherwise to much baggage to add all languages
+                        data = "Japanese" if data == "日本語" else "English" 
+                    metadata.language = data
                     log.info(f"KoboMetadata::parse_book_page: Got language: {metadata.language}")
 
         tags_elements = page.xpath("//ul[@class='category-rankings']/meta[@property='genre']")
