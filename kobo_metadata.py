@@ -32,9 +32,9 @@ class KoboMetadataImpl:
     
     def get_kobo_url(self, kobo_id: str, prefs: Dict[str, any]) -> str:
         if prefs['language'] == 'all':
-            url = f"{self.BASE_URL}{prefs['country']}/ebook/{kobo_id}"
+            url = f"{self.BASE_URL}{prefs['country']}/search?query={kobo_id}"
         else:
-            url = f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/ebook/{kobo_id}"
+            url = f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/search?query={kobo_id}"
         return url
     
     @staticmethod
