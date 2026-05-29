@@ -65,7 +65,7 @@ class KoboMetadataImpl:
 
         if isbn:
             log.info(f"Searching with ISBN: {isbn}")
-            id_urls.extend(self._perform_isbn_search(isbn, prefs["num_matches"], prefs, timeout, log))
+            id_urls.append(self.get_kobo_url(isbn, prefs))
 
         if id_urls:
             unique_id_urls = list(dict.fromkeys(id_urls))
