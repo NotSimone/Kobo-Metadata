@@ -4,7 +4,7 @@ from calibre.ebooks.metadata.sources.base import Option, Source
 class KoboMetadata(Source):
     name = "Kobo Metadata"
     author = "NotSimone"
-    version = (1, 12, 1)
+    version = (1, 13, 0)
     minimum_calibre_version = (5, 0, 0)
     description = _("Downloads metadata and covers from Kobo")
 
@@ -119,9 +119,27 @@ class KoboMetadata(Source):
             _("Resize cover"),
             _("Resize the cover to the maximum_cover_size tweak setting"),
         ),
-        Option("differentiate_kobo_isbn", "bool", False, ("Differentiate between Kobo ID and ISBN?"), ("Do not falsely write Kobo ID as ISBN.")),
-        Option("use_author", "bool", True, ("Use author information for search?"), ("Use author information for the search of metadata/cover when selected; recommended for light novels.")),
-        Option("only_light_novels", "bool", False, ("Use Light Novel tag? (!Only usable on japanese Kobo)"), ("Use Light Novel tag for the search to avoid same named mangas."))
+        Option(
+            "differentiate_kobo_isbn",
+            "bool",
+            False,
+            ("Differentiate between Kobo ID and ISBN?"),
+            ("Do not falsely write Kobo ID as ISBN."),
+        ),
+        Option(
+            "use_author",
+            "bool",
+            True,
+            ("Use author information for search?"),
+            ("Use author information for the search of metadata/cover when selected; recommended for light novels."),
+        ),
+        Option(
+            "only_light_novels",
+            "bool",
+            False,
+            ("Use Light Novel tag? (!Only usable on japanese Kobo)"),
+            ("Use Light Novel tag for the search to avoid same named mangas."),
+        ),
     )
 
     _impl = None
@@ -151,7 +169,7 @@ class KoboMetadata(Source):
 
         if isbn is not None:
             return self.cached_identifier_to_cover_url(isbn)
-        
+
         if kobo is not None:
             return self.cached_identifier_to_cover_url(kobo)
 
