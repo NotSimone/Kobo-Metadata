@@ -305,7 +305,7 @@ class KoboMetadataImpl:
 
                 if descriptor == "Release Date:" or descriptor == "発売日：":  # japanese colon is different
                     if prefs["language"] == "ja":
-                        date_match = re.match("(\d{4})年(\d{1,2})月(\d{1,2})日", data)
+                        date_match = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日", data)
                         data = f"{date_match.groups(0)[0]}-{date_match.groups(0)[1]}-{date_match.groups(0)[2]}"
                     if data:
                         metadata.pubdate = parse_only_date(data)
