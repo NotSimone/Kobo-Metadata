@@ -338,10 +338,9 @@ class KoboMetadataImpl:
             log.info(f"KoboMetadata::parse_book_page: Got comments: {metadata.comments}")
 
         cover_url = self._parse_book_page_for_cover(page, prefs, log)
-        if cover_url:
-            self.plugin.cache_identifier_to_cover_url(
-                metadata.isbn if metadata.isbn else metadata.identifiers["kobo"], cover_url
-            )
+        identifier = metadata.isbn if metadata.isbn else metadata.identifiers.get("kobo", None)
+        if cover_url and identifier:
+            self.plugin.cache_identifier_to_cover_url(identifier, cover_url)
 
         blacklisted_title = self._check_title_blacklist(title, prefs, log)
         if blacklisted_title:
