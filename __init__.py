@@ -81,6 +81,17 @@ class KoboMetadata(Source):
         ),
         Option("language", "string", "en", _("2 Letter language code to search for"), _("Default: en")),
         Option(
+            "use_book_language",
+            "bool",
+            True,
+            _("Use the book's language for search"),
+            _(
+                "Detect the language of each book from the library and use it for the Kobo search "
+                "instead of the fixed language code above. Falls back to the language code above "
+                "when the book's language is unknown or cannot be detected."
+            ),
+        ),
+        Option(
             "num_matches",
             "number",
             1,
