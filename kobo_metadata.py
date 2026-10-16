@@ -54,6 +54,7 @@ class KoboMetadataImpl:
         log: Log,
     ) -> None:
         log.info(f"KoboMetadata::identify: title: {title}, authors: {authors}, identifiers: {identifiers}")
+        prefs = self._book_language_prefs(title, authors, identifiers, prefs, log)
 
         id_urls = []
         isbn = check_isbn(identifiers.get("isbn", None))
@@ -100,6 +101,7 @@ class KoboMetadataImpl:
         log: Log,
     ) -> None:
         log.info(f"KoboMetadata::get_cover_url: title: {title}, authors: {authors}, identifiers: {identifiers}")
+        prefs = self._book_language_prefs(title, authors, identifiers, prefs, log)
         urls = []
 
         isbn = check_isbn(identifiers.get("isbn", None))
@@ -391,3 +393,112 @@ class KoboMetadataImpl:
         blacklisted_tags = {x.strip().lower() for x in prefs["tag_blacklist"].split(",")}
         log.info(f"KoboMetadata::_check_tag_blacklist: blacklisted tags: {blacklisted_tags}")
         return blacklisted_tags.intersection({x.lower() for x in tags})
+
+    # --- Book language detection --------------------------------------------
+
+    # Returns a copy of prefs with the detected book language, or the original
+    # prefs if the language cannot be determined or auto-detection is disabled.
+    def _book_language_prefs(
+        self, title: str, authors: List[str], identifiers: Dict[str, any], prefs: Dict[str, any], log: Log
+    ) -> Dict[str, any]:
+        if not prefs["use_book_language"]:
+            return prefs
+
+        lang = self._detect_book_language(title, authors, identifiers, log)
+        if not lang:
+            return prefs
+
+        merged = {**prefs.defaults, **prefs, "language": lang}
+        log.info(f"KoboMetadata::_book_language_prefs: overriding search language to '{lang}'")
+        return merged
+
+    # Returns the ISO 639-1 (2 letter) code of the book's language, or None.
+    # The language is read from the Calibre library (populated from the epub's
+    # dc:language on import), so this only works while running inside the GUI.
+    def _detect_book_language(
+        self, title: str, authors: List[str], identifiers: Dict[str, any], log: Log
+    ) -> Optional[str]:
+        try:
+            from calibre.gui2.ui import get_gui
+        except Exception as e:
+            log.info(f"KoboMetadata::_detect_book_language: GUI unavailable: {e}")
+            return None
+
+        try:
+            gui = get_gui()
+            db = gui.current_db if gui is not None else None
+        except Exception as e:
+            log.info(f"KoboMetadata::_detect_book_language: no current database: {e}")
+            return None
+
+        if db is None:
+            return None
+
+        book_id = self._find_book_id(db.new_api, title, authors, identifiers)
+        if book_id is None:
+            log.info("KoboMetadata::_detect_book_language: book not found in library")
+            return None
+
+        try:
+            languages = db.new_api.field_for("languages", book_id)
+        except Exception as e:
+            log.info(f"KoboMetadata::_detect_book_language: could not read language field: {e}")
+            return None
+
+        if not languages:
+            return None
+
+        try:
+            from calibre.utils.localization import lang_as_iso639_1
+        except Exception as e:
+            log.info(f"KoboMetadata::_detect_book_language: could not map language code: {e}")
+            return None
+
+        for lang in languages:
+            code = lang_as_iso639_1(lang)
+            if code:
+                log.info(f"KoboMetadata::_detect_book_language: detected '{code}' from '{lang}'")
+                return code
+        return None
+
+    # Locates the book in the library, preferring identifiers, then falling back
+    # to an exact title match (narrowed by author when ambiguous).
+    def _find_book_id(self, new_api, title: str, authors: List[str], identifiers: Dict[str, any]) -> Optional[int]:
+        for key, value in (identifiers or {}).items():
+            value = str(value).strip()
+            if not value:
+                continue
+            if key == "isbn":
+                isbn = check_isbn(value)
+                if not isbn:
+                    continue
+                query = f"isbn:{isbn}"
+            else:
+                query = f'identifiers:"{key}:{value}"'
+            try:
+                ids = new_api.search(query)
+            except Exception:
+                continue
+            if ids:
+                return next(iter(ids))
+
+        if not title:
+            return None
+        sanitized_title = title.replace('"', "")
+        try:
+            ids = set(new_api.search(f'title:"={sanitized_title}"') or ())
+        except Exception:
+            return None
+        if not ids:
+            return None
+        if len(ids) == 1:
+            return next(iter(ids))
+        if authors:
+            for author in authors:
+                try:
+                    narrowed = ids & set(new_api.search(f'authors:"={author}"') or ())
+                except Exception:
+                    continue
+                if len(narrowed) == 1:
+                    return next(iter(narrowed))
+        return None
