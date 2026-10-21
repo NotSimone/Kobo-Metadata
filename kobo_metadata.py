@@ -1,4 +1,7 @@
+import os
+import pathlib
 import re
+import sqlite3
 import string
 import time
 from queue import Queue
@@ -19,6 +22,8 @@ import requests
 
 class KoboMetadataImpl:
     BASE_URL = "https://www.kobo.com/"
+    # ISO 639-1 codes of the languages Kobo offers in its search filter
+    KOBO_LANGUAGES = frozenset({"de", "en", "es", "fr", "it", "ja", "nl", "pt", "tr", "zh"})
     session: Optional[requests.Session] = None
 
     def __init__(self, plugin):
@@ -413,92 +418,94 @@ class KoboMetadataImpl:
         return merged
 
     # Returns the ISO 639-1 (2 letter) code of the book's language, or None.
-    # The language is read from the Calibre library (populated from the epub's
-    # dc:language on import), so this only works while running inside the GUI.
+    # Calibre runs metadata downloads in a separate worker process without
+    # access to the GUI or the library, and identify() only receives title,
+    # authors and identifiers. So the language is read directly from the
+    # metadata.db of the library the GUI last opened, in read-only mode.
     def _detect_book_language(
         self, title: str, authors: List[str], identifiers: Dict[str, any], log: Log
     ) -> Optional[str]:
         try:
-            from calibre.gui2.ui import get_gui
+            from calibre.utils.config import prefs as calibre_prefs
+
+            library_path = calibre_prefs["library_path"]
         except Exception as e:
-            log.info(f"KoboMetadata::_detect_book_language: GUI unavailable: {e}")
+            log.info(f"KoboMetadata::_detect_book_language: could not determine library path: {e}")
+            return None
+
+        if not library_path:
+            return None
+
+        db_path = os.path.join(library_path, "metadata.db")
+        if not os.path.exists(db_path):
+            log.info(f"KoboMetadata::_detect_book_language: no library database at {db_path}")
             return None
 
         try:
-            gui = get_gui()
-            db = gui.current_db if gui is not None else None
+            languages = self._query_book_languages(db_path, title, authors, identifiers)
         except Exception as e:
-            log.info(f"KoboMetadata::_detect_book_language: no current database: {e}")
+            log.info(f"KoboMetadata::_detect_book_language: could not read library database: {e}")
             return None
 
-        if db is None:
+        if len(languages) != 1:
+            log.info(f"KoboMetadata::_detect_book_language: no unique language found in library: {languages}")
             return None
 
-        book_id = self._find_book_id(db.new_api, title, authors, identifiers)
-        if book_id is None:
-            log.info("KoboMetadata::_detect_book_language: book not found in library")
+        from calibre.utils.localization import lang_as_iso639_1
+
+        lang = languages.pop()
+        code = lang_as_iso639_1(lang)
+        if code not in self.KOBO_LANGUAGES:
+            log.info(f"KoboMetadata::_detect_book_language: language '{lang}' is not available on Kobo")
             return None
 
-        try:
-            languages = db.new_api.field_for("languages", book_id)
-        except Exception as e:
-            log.info(f"KoboMetadata::_detect_book_language: could not read language field: {e}")
-            return None
+        log.info(f"KoboMetadata::_detect_book_language: detected '{code}' from '{lang}'")
+        return code
 
-        if not languages:
-            return None
-
-        try:
-            from calibre.utils.localization import lang_as_iso639_1
-        except Exception as e:
-            log.info(f"KoboMetadata::_detect_book_language: could not map language code: {e}")
-            return None
-
-        for lang in languages:
-            code = lang_as_iso639_1(lang)
-            if code:
-                log.info(f"KoboMetadata::_detect_book_language: detected '{code}' from '{lang}'")
-                return code
-        return None
-
-    # Locates the book in the library, preferring identifiers, then falling back
-    # to an exact title match (narrowed by author when ambiguous).
-    def _find_book_id(self, new_api, title: str, authors: List[str], identifiers: Dict[str, any]) -> Optional[int]:
+    # Returns the set of primary languages of all library books that match by
+    # identifier, or by title and author, in a single query.
+    def _query_book_languages(
+        self, db_path: str, title: str, authors: List[str], identifiers: Dict[str, any]
+    ) -> set:
+        conditions = []
+        params = []
         for key, value in (identifiers or {}).items():
             value = str(value).strip()
-            if not value:
-                continue
             if key == "isbn":
-                isbn = check_isbn(value)
-                if not isbn:
-                    continue
-                query = f"isbn:{isbn}"
-            else:
-                query = f'identifiers:"{key}:{value}"'
-            try:
-                ids = new_api.search(query)
-            except Exception:
-                continue
-            if ids:
-                return next(iter(ids))
+                value = check_isbn(value)
+            if value:
+                conditions.append("b.id IN (SELECT book FROM identifiers WHERE type = ? AND val = ?)")
+                params += [key, value]
 
-        if not title:
-            return None
-        sanitized_title = title.replace('"', "")
+        # Calibre stores commas in author names as '|'
+        author_names = [a.replace(",", "|") for a in (authors or []) if a]
+        if title and author_names:
+            placeholders = ", ".join("?" * len(author_names))
+            conditions.append(
+                "(b.title = ? COLLATE NOCASE AND b.id IN ("
+                "SELECT bal.book FROM books_authors_link bal JOIN authors a ON a.id = bal.author "
+                f"WHERE a.name COLLATE NOCASE IN ({placeholders})))"
+            )
+            params += [title, *author_names]
+
+        if not conditions:
+            return set()
+
+        query = (
+            "SELECT b.id, l.lang_code FROM books b "
+            "JOIN books_languages_link bll ON bll.book = b.id "
+            "JOIN languages l ON l.id = bll.lang_code "
+            f"WHERE {' OR '.join(conditions)} "
+            "ORDER BY b.id, bll.item_order"
+        )
+        conn = sqlite3.connect(f"{pathlib.Path(db_path).as_uri()}?mode=ro", uri=True, timeout=5)
         try:
-            ids = set(new_api.search(f'title:"={sanitized_title}"') or ())
-        except Exception:
-            return None
-        if not ids:
-            return None
-        if len(ids) == 1:
-            return next(iter(ids))
-        if authors:
-            for author in authors:
-                try:
-                    narrowed = ids & set(new_api.search(f'authors:"={author}"') or ())
-                except Exception:
-                    continue
-                if len(narrowed) == 1:
-                    return next(iter(narrowed))
-        return None
+            rows = conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
+
+        # Only the first (primary) language of each matching book counts
+        primary = {}
+        for book_id, lang in rows:
+            primary.setdefault(book_id, lang)
+        return set(primary.values())
