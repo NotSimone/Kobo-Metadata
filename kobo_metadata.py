@@ -176,6 +176,7 @@ class KoboMetadataImpl:
         if isbn:
             log.info(f"KoboMetadata::perform_isbn_search: Getting metadata with isbn: {isbn}")
             return self._perform_query(isbn, max_matches, prefs, timeout, log)
+        return []
 
     def _perform_search(
         self, title: str, authors: List[str], max_matches: int, prefs: Dict[str, any], timeout: int, log: Log
@@ -193,11 +194,11 @@ class KoboMetadataImpl:
                 page, is_search = self._get_webpage(url, timeout, log)
                 if page is None or is_search:
                     log.info(f"KoboMetadata::fetch_metadata: Could not get url: {url}")
-                    return
+                    continue
                 metadata = self._parse_book_page(page, prefs, log)
             except Exception as e:
                 log.error(f"KoboMetadata::fetch_metadata: Got exception looking up metadata: {e}")
-                return
+                continue
 
             if metadata:
                 metadata.source_relevance = index
@@ -242,7 +243,9 @@ class KoboMetadataImpl:
         while len(results) < max_matches and page_num < max_page_num:
             url = self.get_search_url(query, page_num, prefs)
             page, is_search = self._get_webpage(url, timeout, log)
-            assert page and is_search
+            if page is None or not is_search:
+                log.info(f"KoboMetadata::perform_query: Could not get search page {page_num}, stopping: {url}")
+                break
             results.extend(self._parse_search_page(page, log))
             page_num += 1
 
@@ -330,9 +333,13 @@ class KoboMetadataImpl:
                 data = x.xpath("span")[0].text if x.xpath("span") else None
 
                 if descriptor == "Release Date:" or descriptor == "発売日：":  # japanese colon is different
-                    if prefs["language"] == "ja":
+                    if prefs["language"] == "ja" and data:
                         date_match = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日", data)
-                        data = f"{date_match.groups(0)[0]}-{date_match.groups(0)[1]}-{date_match.groups(0)[2]}"
+                        if date_match:
+                            data = f"{date_match.groups(0)[0]}-{date_match.groups(0)[1]}-{date_match.groups(0)[2]}"
+                        else:
+                            log.info(f"KoboMetadata::parse_book_page: Could not parse japanese date: {data}")
+                            data = None
                     if data:
                         metadata.pubdate = parse_only_date(data)
                         log.info(f"KoboMetadata::parse_book_page: Got pubdate: {metadata.pubdate}")
@@ -520,9 +527,10 @@ class KoboMetadataImpl:
         cover_elements = page.xpath("//img[contains(@class, 'cover-image')]") or page.xpath(
             "//div[@data-testid='book-metadata-details']//img[@data-testid='cover']"
         )
-        if cover_elements:
+        src = cover_elements[0].get("src") if cover_elements else None
+        if src:
             # Sample: https://cdn.kobo.com/book-images/44f0e8b9-3338-4d1c-bd6e-e88e82cb8fad/353/569/90/False/holly-23.jpg
-            cover_url = "https:" + cover_elements[0].get("src")
+            cover_url = "https:" + src if src.startswith("//") else src
             if prefs["resize_cover"]:
                 # Change the resolution from 353x569 to maximum_cover_size (default 1650x2200)
                 # Kobo will resize to match the width and have the correct aaspect ratio
@@ -541,17 +549,17 @@ class KoboMetadataImpl:
         if not prefs["title_blacklist"]:
             return None
 
-        blacklisted_words = {x.strip().lower() for x in prefs["title_blacklist"].split(",")}
+        blacklisted_words = {x.strip().lower() for x in prefs["title_blacklist"].split(",") if x.strip()}
         log.info(f"KoboMetadata::_check_title_blacklist: blacklisted title words: {blacklisted_words}")
         # Remove punctuation from title string
         title_str = title.translate(str.maketrans("", "", string.punctuation))
-        return blacklisted_words.intersection(title_str.lower().split(" "))
+        return blacklisted_words.intersection(title_str.lower().split())
 
     # Returns the set of tags that are also blacklisted
     def _check_tag_blacklist(self, tags: set[str], prefs: Dict[str, any], log: Log) -> set[str]:
         if not prefs["tag_blacklist"]:
             return None
 
-        blacklisted_tags = {x.strip().lower() for x in prefs["tag_blacklist"].split(",")}
+        blacklisted_tags = {x.strip().lower() for x in prefs["tag_blacklist"].split(",") if x.strip()}
         log.info(f"KoboMetadata::_check_tag_blacklist: blacklisted tags: {blacklisted_tags}")
         return blacklisted_tags.intersection({x.lower() for x in tags})
