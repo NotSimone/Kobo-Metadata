@@ -1,3 +1,4 @@
+import json
 import re
 import string
 import time
@@ -271,6 +272,31 @@ class KoboMetadataImpl:
 
     # Given a page that has the details of a book, parse and return the Metadata
     def _parse_book_page(self, page: html.Element, prefs: Dict[str, any], log: Log) -> Metadata:
+        # Kobo is moving their book pages to a new layout, starting with the Japanese store
+        if page.xpath("//h1[@data-testid='book-title']"):
+            log.info("KoboMetadata::parse_book_page: Detected new book page")
+            metadata = self._parse_new_book_page(page, prefs, log)
+        else:
+            metadata = self._parse_old_book_page(page, prefs, log)
+
+        cover_url = self._parse_book_page_for_cover(page, prefs, log)
+        identifier = metadata.isbn if metadata.isbn else metadata.identifiers.get("kobo", None)
+        if cover_url and identifier:
+            self.plugin.cache_identifier_to_cover_url(identifier, cover_url)
+
+        blacklisted_title = self._check_title_blacklist(metadata.title, prefs, log)
+        if blacklisted_title:
+            log.info(f"KoboMetadata::parse_book_page: Hit blacklisted word(s) in the title: {blacklisted_title}")
+            return None
+
+        blacklisted_tags = self._check_tag_blacklist(metadata.tags, prefs, log)
+        if blacklisted_tags:
+            log.info(f"KoboMetadata::parse_book_page: Hit blacklisted tag(s): {blacklisted_tags}")
+            return None
+
+        return metadata
+
+    def _parse_old_book_page(self, page: html.Element, prefs: Dict[str, any], log: Log) -> Metadata:
         title_elements = page.xpath("//h1[@class='title product-field']")
         title = title_elements[0].text.strip()
         log.info(f"KoboMetadata::parse_book_page: Got title: {title}")
@@ -319,12 +345,7 @@ class KoboMetadataImpl:
                         log.info(f"KoboMetadata::parse_book_page: Got pubdate: {metadata.pubdate}")
 
                 elif descriptor == "ISBN:" or descriptor == "Book ID:" or descriptor == "書籍ID：":
-                    if prefs["differentiate_kobo_isbn"] and not KoboMetadataImpl.check_isbn_valid(data):
-                        metadata.set_identifier("kobo", data)
-                        log.info(f"KoboMetadata::parse_book_page: Got kobo book id: {data}")
-                    else:
-                        metadata.isbn = data
-                        log.info(f"KoboMetadata::parse_book_page: Got isbn: {metadata.isbn}")
+                    self._set_isbn(metadata, data, prefs, log)
 
                 elif descriptor == "Language:" or descriptor == "言語：":
                     if prefs["language"] == "ja":
@@ -344,26 +365,168 @@ class KoboMetadataImpl:
             metadata.comments = "".join(html.tostring(child, encoding="unicode") for child in synopsis_elements[0])
             log.info(f"KoboMetadata::parse_book_page: Got comments: {metadata.comments}")
 
-        cover_url = self._parse_book_page_for_cover(page, prefs, log)
-        identifier = metadata.isbn if metadata.isbn else metadata.identifiers.get("kobo", None)
-        if cover_url and identifier:
-            self.plugin.cache_identifier_to_cover_url(identifier, cover_url)
+        return metadata
 
-        blacklisted_title = self._check_title_blacklist(title, prefs, log)
-        if blacklisted_title:
-            log.info(f"KoboMetadata::parse_book_page: Hit blacklisted word(s) in the title: {blacklisted_title}")
-            return None
+    # The new book pages are built with Next.js. The title, authors and cover are read from the html. The rest comes
+    # from the data embedded in the page: the synopsis is only filled in by javascript, the "About this book" section
+    # is localised (and not always correctly, e.g. it has Turkish labels on the Japanese store), and the genre chips
+    # leave out the parent categories that the tags on the old book page included.
+    def _parse_new_book_page(self, page: html.Element, prefs: Dict[str, any], log: Log) -> Metadata:
+        title = page.xpath("//h1[@data-testid='book-title']")[0].text_content().strip()
+        log.info(f"KoboMetadata::parse_new_book_page: Got title: {title}")
 
-        blacklisted_tags = self._check_tag_blacklist(metadata.tags, prefs, log)
-        if blacklisted_tags:
-            log.info(f"KoboMetadata::parse_book_page: Hit blacklisted tag(s): {blacklisted_tags}")
-            return None
+        authors_elements = page.xpath("//div[@data-testid='book-metadata-details']//a[contains(@href, '/author/')]")
+        authors = fixauthors([x.text_content().strip() for x in authors_elements])
+        log.info(f"KoboMetadata::parse_new_book_page: Got authors: {authors}")
+
+        metadata = Metadata(title, authors)
+
+        try:
+            item_details = self._get_item_details(page)
+            if not item_details:
+                log.error("KoboMetadata::parse_new_book_page: Could not find the book details in the page data")
+        except Exception as e:
+            log.error(f"KoboMetadata::parse_new_book_page: Got exception reading the page data: {e}")
+            item_details = None
+
+        tags = None
+        if item_details:
+            # Use the language the page is in (e.g. ja-JP), like the genre chips do
+            locale = page.xpath("string(/html/@lang)").lower() or prefs["language"]
+            tags = self._get_category_names(item_details, locale)
+        if not tags:
+            # The genre chips only show the last category of each of the book's category paths
+            tags = {x.text_content().strip() for x in page.xpath("//ul[@data-testid='categories-item-details']//a")}
+            tags.discard("")
+        if tags:
+            # Calibre doesnt like commas in tags
+            metadata.tags = {x.replace(", ", " ") for x in tags}
+            log.info(f"KoboMetadata::parse_new_book_page: Got tags: {metadata.tags}")
+
+        if not item_details:
+            return metadata
+
+        book = item_details["metadata"]
+
+        series = book.get("series")
+        if isinstance(series, dict) and series.get("name"):
+            metadata.series = series["name"]
+            log.info(f"KoboMetadata::parse_new_book_page: Got series: {metadata.series}")
+            try:
+                metadata.series_index = float(series.get("number"))
+                log.info(f"KoboMetadata::parse_new_book_page: Got series_index: {metadata.series_index}")
+            except (TypeError, ValueError):
+                pass
+
+        if book.get("isbn"):
+            self._set_isbn(metadata, book["isbn"], prefs, log)
+
+        # Sample: 2020-03-14T00:00:00.0000000Z
+        if book.get("publicationDate"):
+            metadata.pubdate = parse_only_date(book["publicationDate"][:10])
+            log.info(f"KoboMetadata::parse_new_book_page: Got pubdate: {metadata.pubdate}")
+
+        publisher = item_details.get("publisher")
+        if isinstance(publisher, dict) and publisher.get("publisher"):
+            metadata.publisher = publisher["publisher"]
+            log.info(f"KoboMetadata::parse_new_book_page: Got publisher: {metadata.publisher}")
+
+        # The English name of the language (e.g. Japanese), even on the Japanese store
+        if book.get("language"):
+            metadata.language = book["language"]
+            log.info(f"KoboMetadata::parse_new_book_page: Got language: {metadata.language}")
+
+        if book.get("description"):
+            metadata.comments = book["description"]
+            log.info(f"KoboMetadata::parse_new_book_page: Got comments: {metadata.comments}")
 
         return metadata
 
+    # Next.js embeds the data used to render the page as a stream of rows, split across self.__next_f.push([1, "..."])
+    # calls. Returns the "itemDetails" object that describes the book, or None if it could not be found.
+    def _get_item_details(self, page: html.Element) -> Optional[Dict[str, any]]:
+        payload = ""
+        for script in page.xpath("//script[contains(text(), 'self.__next_f.push(')]"):
+            for match in re.finditer(r"self\.__next_f\.push\(\s*", script.text):
+                chunk, _ = json.JSONDecoder().raw_decode(script.text, match.end())
+                if len(chunk) > 1 and chunk[0] == 1:
+                    payload += chunk[1]
+
+        # Rows end with a newline, except for text rows ("<id>:T<length in bytes>,<text>"). These hold long strings
+        # (such as most English synopses), which are then referenced elsewhere as "$<id>".
+        text_rows = {}
+        data = payload.encode("utf-8")
+        text_row_header = re.compile(rb"([0-9a-f]+):T([0-9a-f]+),")
+        pos = 0
+        while pos < len(data):
+            match = text_row_header.match(data, pos)
+            if match:
+                pos = match.end() + int(match.group(2), 16)
+                text_rows[match.group(1).decode()] = data[match.end() : pos].decode("utf-8", errors="replace")
+            else:
+                newline = data.find(b"\n", pos)
+                pos = len(data) if newline == -1 else newline + 1
+
+        def resolve_references(obj: Dict[str, any]) -> Dict[str, any]:
+            return {key: self._resolve_page_data_value(value, text_rows) for key, value in obj.items()}
+
+        decoder = json.JSONDecoder(object_hook=resolve_references)
+        for match in re.finditer(r'"itemDetails":\s*', payload):
+            item_details, _ = decoder.raw_decode(payload, match.end())
+            if isinstance(item_details, dict) and isinstance(item_details.get("metadata"), dict):
+                return item_details
+        return None
+
+    # Strings in the page data that start with "$" are references, such as "$3a" for the text row with id 3a, or
+    # "$undefined". Strings that really start with "$" are escaped as "$$".
+    @staticmethod
+    def _resolve_page_data_value(value: any, text_rows: Dict[str, str]) -> any:
+        if not isinstance(value, str) or not value.startswith("$"):
+            return value
+        if value.startswith("$$"):
+            return value[1:]
+        return text_rows.get(value[1:])
+
+    # Returns the name of every category along the paths of the book's categories (e.g. 小説・文学 > ライトノベル), which
+    # is what the tags on the old book page were made of. Returns an empty set if the categories can't be read.
+    def _get_category_names(self, item_details: Dict[str, any], locale: str) -> set[str]:
+        names = set()
+        try:
+            for path in item_details["browseCategories"]:
+                for category in path["categories"]:
+                    names.add(self._get_localised_name(category["name"], locale))
+        except (KeyError, TypeError, AttributeError):
+            return set()
+        return {name for name in names if name}
+
+    # Category names are in English, with translations keyed by language or by language and region (e.g. ja, zh-TW)
+    @staticmethod
+    def _get_localised_name(name: Dict[str, any], locale: str) -> Optional[str]:
+        translations = {key.lower(): value for key, value in (name.get("translations") or {}).items() if value}
+        language = locale.split("-")[0]
+        for key in (locale, language):
+            if key in translations:
+                return translations[key]
+        for key, value in translations.items():
+            if key.startswith(f"{language}-"):
+                return value
+        return name.get("default")
+
+    # Kobo lists its own book id in place of the isbn for some books (e.g. on the Japanese store)
+    def _set_isbn(self, metadata: Metadata, isbn: str, prefs: Dict[str, any], log: Log) -> None:
+        if prefs["differentiate_kobo_isbn"] and not KoboMetadataImpl.check_isbn_valid(isbn):
+            metadata.set_identifier("kobo", isbn)
+            log.info(f"KoboMetadata::set_isbn: Got kobo book id: {isbn}")
+        else:
+            metadata.isbn = isbn
+            log.info(f"KoboMetadata::set_isbn: Got isbn: {metadata.isbn}")
+
     def _parse_book_page_for_cover(self, page: html.Element, prefs: Dict[str, any], log: Log) -> str:
         cover_url = None
-        cover_elements = page.xpath("//img[contains(@class, 'cover-image')]")
+        # Old and new book page layouts respectively
+        cover_elements = page.xpath("//img[contains(@class, 'cover-image')]") or page.xpath(
+            "//div[@data-testid='book-metadata-details']//img[@data-testid='cover']"
+        )
         src = cover_elements[0].get("src") if cover_elements else None
         if src:
             # Sample: https://cdn.kobo.com/book-images/44f0e8b9-3338-4d1c-bd6e-e88e82cb8fad/353/569/90/False/holly-23.jpg
